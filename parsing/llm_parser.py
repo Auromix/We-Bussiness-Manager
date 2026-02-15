@@ -1,17 +1,18 @@
-"""LLM 解析引擎（OpenAI + Claude）"""
+"""LLM 解析引擎 - 使用新的 Agent 架构"""
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
-from openai import OpenAI
-from anthropic import Anthropic
-import json
-import re
 from loguru import logger
 from config.settings import settings
-from config.prompts import get_system_prompt, get_user_prompt, SYSTEM_PROMPT
+from config.prompts import get_system_prompt
+
+# 导入新的 Agent 架构
+from agent import Agent, create_provider
+from agent.functions.registry import FunctionRegistry
+from agent.functions.discovery import register_instance_methods, auto_discover_and_register
 
 
 class LLMParser(ABC):
-    """LLM 解析器抽象基类"""
+    """LLM 解析器抽象基类（向后兼容接口）"""
     
     @abstractmethod
     async def parse_message(self, sender: str, timestamp: str, content: str) -> List[Dict[str, Any]]:
@@ -19,116 +20,31 @@ class LLMParser(ABC):
         pass
 
 
-class OpenAIParser(LLMParser):
-    """OpenAI GPT 解析器"""
+class AgentBasedParser(LLMParser):
+    """基于 Agent 架构的解析器（统一实现）"""
     
-    def __init__(self, api_key: str, model: str = None, system_prompt: Optional[str] = None):
-        self.client = OpenAI(api_key=api_key)
-        self.model = model or settings.openai_model
-        self.system_prompt = system_prompt or get_system_prompt()
+    def __init__(self, agent: Agent):
+        """初始化基于 Agent 的解析器
+        
+        Args:
+            agent: Agent 实例
+        """
+        self.agent = agent
     
     async def parse_message(self, sender: str, timestamp: str, content: str) -> List[Dict[str, Any]]:
-        """使用 OpenAI API 解析消息"""
-        try:
-            user_prompt = get_user_prompt(sender, timestamp, content)
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.1,  # 低温度保证一致性
-            )
-            
-            result_text = response.choices[0].message.content
-            return self._parse_json_response(result_text)
-            
-        except Exception as e:
-            logger.error(f"OpenAI parsing error: {e}")
-            raise
-    
-    def _parse_json_response(self, text: str) -> List[Dict[str, Any]]:
-        """解析 LLM 返回的 JSON"""
-        # 清理可能的 markdown code block
-        text = text.strip()
-        if text.startswith("```"):
-            text = re.sub(r'^```(?:json)?\s*', '', text)
-            text = re.sub(r'\s*```$', '', text)
-        
-        try:
-            data = json.loads(text)
-            # 如果返回的是单个对象，转换为列表
-            if isinstance(data, dict):
-                # 检查是否有 records 字段
-                if "records" in data:
-                    return data["records"]
-                # 否则包装为列表
-                return [data]
-            elif isinstance(data, list):
-                return data
-            else:
-                logger.warning(f"Unexpected response format: {type(data)}")
-                return [{"type": "noise"}]
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}, text: {text[:200]}")
-            return [{"type": "noise", "error": str(e)}]
+        """使用 Agent 解析消息"""
+        return await self.agent.parse_message(sender, timestamp, content)
 
 
-class ClaudeParser(LLMParser):
-    """Anthropic Claude 解析器"""
-    
-    def __init__(self, api_key: str, model: str = None, system_prompt: Optional[str] = None):
-        self.client = Anthropic(api_key=api_key)
-        self.model = model or settings.anthropic_model
-        self.system_prompt = system_prompt or get_system_prompt()
-    
-    async def parse_message(self, sender: str, timestamp: str, content: str) -> List[Dict[str, Any]]:
-        """使用 Claude API 解析消息"""
-        try:
-            user_prompt = get_user_prompt(sender, timestamp, content)
-            
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2048,
-                system=self.system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ],
-            )
-            
-            # Claude 返回的文本可能包含 markdown code block
-            text = response.content[0].text
-            return self._parse_json_response(text)
-            
-        except Exception as e:
-            logger.error(f"Claude parsing error: {e}")
-            raise
-    
-    def _parse_json_response(self, text: str) -> List[Dict[str, Any]]:
-        """解析 Claude 返回的 JSON"""
-        # 清理可能的 markdown code block
-        text = text.strip()
-        if text.startswith("```"):
-            text = re.sub(r'^```(?:json)?\s*', '', text)
-            text = re.sub(r'\s*```$', '', text)
-        
-        try:
-            data = json.loads(text)
-            # 如果返回的是单个对象，转换为列表
-            if isinstance(data, dict):
-                if "records" in data:
-                    return data["records"]
-                return [data]
-            elif isinstance(data, list):
-                return data
-            else:
-                logger.warning(f"Unexpected response format: {type(data)}")
-                return [{"type": "noise"}]
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}, text: {text[:200]}")
-            return [{"type": "noise", "error": str(e)}]
+# 向后兼容的别名
+class OpenAIParser(AgentBasedParser):
+    """OpenAI GPT 解析器（向后兼容）"""
+    pass
+
+
+class ClaudeParser(AgentBasedParser):
+    """Anthropic Claude 解析器（向后兼容）"""
+    pass
 
 
 class LLMParserWithFallback:
@@ -154,12 +70,35 @@ class LLMParserWithFallback:
                 raise
 
 
-def create_llm_parser(system_prompt: Optional[str] = None) -> LLMParserWithFallback:
+def create_llm_parser(
+    system_prompt: Optional[str] = None,
+    db_repo=None,
+    enable_function_calling: bool = False,
+    custom_function_targets: Optional[List[Any]] = None
+) -> LLMParserWithFallback:
     """
-    创建 LLM 解析器实例
+    创建 LLM 解析器实例（使用新的 Agent 架构）
     
     Args:
         system_prompt: 系统提示词，如果为 None 则从 business_config 获取
+        db_repo: 数据库仓库实例（如果启用函数调用）
+        enable_function_calling: 是否启用函数调用功能
+        custom_function_targets: 自定义函数目标列表，用于注册其他对象的方法
+            可以是: [obj1, (obj2, "prefix_"), module1, ...]
+    
+    Examples:
+        # 只注册数据库仓库
+        llm_parser = create_llm_parser(db_repo=db_repo, enable_function_calling=True)
+        
+        # 注册数据库仓库和其他服务
+        llm_parser = create_llm_parser(
+            db_repo=db_repo,
+            enable_function_calling=True,
+            custom_function_targets=[
+                (membership_svc, "membership_"),
+                (inventory_svc, "inventory_"),
+            ]
+        )
     """
     # 如果没有提供，从业务配置获取
     if system_prompt is None:
@@ -168,28 +107,74 @@ def create_llm_parser(system_prompt: Optional[str] = None) -> LLMParserWithFallb
     primary = None
     fallback = None
     
+    # 创建函数注册表（如果启用函数调用）
+    function_registry = None
+    if enable_function_calling:
+        function_registry = FunctionRegistry()
+        
+        # 注册数据库仓库（使用 db_ 前缀）
+        if db_repo:
+            register_instance_methods(
+                function_registry,
+                db_repo,
+                class_name="DatabaseRepository",
+                prefix="db_"
+            )
+            logger.info("Function calling enabled with database repository")
+        
+        # 注册自定义目标
+        if custom_function_targets:
+            auto_discover_and_register(function_registry, custom_function_targets)
+            logger.info(f"Registered {len(custom_function_targets)} custom function targets")
+    
+    # 创建主解析器
     if settings.primary_llm == "openai":
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when PRIMARY_LLM=openai")
-        primary = OpenAIParser(api_key=settings.openai_api_key, model=settings.openai_model, system_prompt=system_prompt)
+        provider = create_provider(
+            "openai",
+            api_key=settings.openai_api_key,
+            model=settings.openai_model
+        )
+        agent = Agent(provider, function_registry, system_prompt)
+        primary = AgentBasedParser(agent)
     elif settings.primary_llm == "anthropic":
         if not settings.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required when PRIMARY_LLM=anthropic")
-        primary = ClaudeParser(api_key=settings.anthropic_api_key, model=settings.anthropic_model, system_prompt=system_prompt)
+        provider = create_provider(
+            "claude",
+            api_key=settings.anthropic_api_key,
+            model=settings.anthropic_model
+        )
+        agent = Agent(provider, function_registry, system_prompt)
+        primary = AgentBasedParser(agent)
     else:
         raise ValueError(f"Unknown PRIMARY_LLM: {settings.primary_llm}")
     
+    # 创建备用解析器
     if settings.fallback_llm and settings.fallback_llm != settings.primary_llm:
         if settings.fallback_llm == "openai":
             if not settings.openai_api_key:
                 logger.warning("Fallback LLM set to openai but OPENAI_API_KEY not set, skipping fallback")
             else:
-                fallback = OpenAIParser(api_key=settings.openai_api_key, model=settings.openai_model, system_prompt=system_prompt)
+                provider = create_provider(
+                    "openai",
+                    api_key=settings.openai_api_key,
+                    model=settings.openai_model
+                )
+                agent = Agent(provider, function_registry, system_prompt)
+                fallback = AgentBasedParser(agent)
         elif settings.fallback_llm == "anthropic":
             if not settings.anthropic_api_key:
                 logger.warning("Fallback LLM set to anthropic but ANTHROPIC_API_KEY not set, skipping fallback")
             else:
-                fallback = ClaudeParser(api_key=settings.anthropic_api_key, model=settings.anthropic_model, system_prompt=system_prompt)
+                provider = create_provider(
+                    "claude",
+                    api_key=settings.anthropic_api_key,
+                    model=settings.anthropic_model
+                )
+                agent = Agent(provider, function_registry, system_prompt)
+                fallback = AgentBasedParser(agent)
     
     if primary is None:
         raise ValueError("Failed to create primary LLM parser")

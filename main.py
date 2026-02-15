@@ -56,9 +56,17 @@ def main():
     # 初始化消息预处理
     preprocessor = MessagePreProcessor()
     
-    # 初始化 LLM 解析器
+    # 初始化 LLM 解析器（可选择启用函数调用）
     logger.info("Initializing LLM parser...")
-    llm_parser = create_llm_parser()
+    # 如果需要启用函数调用，传入 db_repo 和 enable_function_calling=True
+    # 这样 Agent 就可以调用仓库函数进行查询等操作
+    enable_function_calling = os.getenv("ENABLE_FUNCTION_CALLING", "false").lower() == "true"
+    llm_parser = create_llm_parser(
+        db_repo=db_repo if enable_function_calling else None,
+        enable_function_calling=enable_function_calling
+    )
+    if enable_function_calling:
+        logger.info("Function calling enabled - Agent can call repository functions")
     
     # 初始化业务逻辑适配器（新项目可以替换这里）
     business_adapter: BusinessLogicAdapter = TherapyStoreAdapter(db_repo)

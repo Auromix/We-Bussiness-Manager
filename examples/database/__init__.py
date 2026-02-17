@@ -1,5 +1,2 @@
-"""数据库开发示例模块
-
-本模块包含数据库相关的独立开发示例。
-"""
+"""Examples for the standalone `database` module."""
 

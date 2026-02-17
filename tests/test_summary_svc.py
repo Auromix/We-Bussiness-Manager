@@ -2,7 +2,7 @@
 import pytest
 from datetime import date, timedelta
 from services.summary_svc import SummaryService
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 
 
 class TestSummaryService:

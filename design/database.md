@@ -1,176 +1,295 @@
-# 数据库技术架构与内容设计
+# Database 模块设计文档
 
-## 一、技术架构
+## 1. 模块概述
 
-### 1.1 架构概览
+`database/` 是一个**独立的数据库访问层模块**，采用 **Repository + Facade** 模式，将数据库操作按职责分层，提供统一的数据访问接口。
 
-本系统采用 **Repository 模式** 和 **ORM 框架**，提供统一的数据库访问接口，支持多种数据库引擎。
+### 设计目标
+
+- **业务与基础操作分离**：数据库连接管理与业务数据操作完全解耦
+- **多业态适配**：抽象出商业模式共性（理发店、健身房、理疗馆、餐厅等）
+- **可扩展性**：通过子仓库继承、`extra_data` 字段、`PluginData` 表支持业态细分
+- **模块独立性**：`database/` 可单独使用，不依赖 `agent/`、`business/`、`interface/` 等模块
+
+---
+
+## 2. 架构分层
 
 ```mermaid
 graph TB
-    A[业务逻辑层] --> B[Repository层]
-    B --> C[BaseRepository<br/>基础访问层]
-    B --> D[DatabaseRepository<br/>业务访问层]
-    C --> E[SQLAlchemy ORM]
-    D --> E
-    E --> F{数据库引擎}
-    F -->|同步| G[SQLite]
-    F -->|异步| H[PostgreSQL]
-    
-    style A fill:#e1f5ff
-    style B fill:#fff4e1
-    style C fill:#ffe1f5
-    style D fill:#ffe1f5
-    style E fill:#e1ffe1
-    style F fill:#f5e1ff
+    subgraph "外部调用方"
+        A[main.py]
+        B[business/adapter]
+        C[parsing/pipeline]
+        D[services/*]
+        E[interface/web]
+    end
+
+    subgraph "database/ 模块"
+        F[DatabaseManager<br/>统一门面]
+
+        subgraph "领域仓库层"
+            G[实体仓库<br/>Staff / Customer<br/>ServiceType / Product<br/>Channel]
+            H[业务仓库<br/>ServiceRecord<br/>ProductSale<br/>Membership]
+            I[系统仓库<br/>Message<br/>Summary<br/>Plugin]
+        end
+
+        J[BaseCRUD<br/>通用CRUD基类]
+        K[DatabaseConnection<br/>连接 / 引擎 / 会话]
+        L[Models<br/>SQLAlchemy ORM]
+    end
+
+    subgraph "数据库引擎"
+        M[(SQLite<br/>开发 / 小规模)]
+        N[(PostgreSQL<br/>生产环境)]
+    end
+
+    A --> F
+    B --> F
+    C --> F
+    D --> F
+    E --> F
+
+    F --> G
+    F --> H
+    F --> I
+
+    G --> J
+    H --> J
+    I --> J
+
+    J --> K
+    K --> L
+    K --> M
+    K --> N
 ```
 
-### 1.2 技术栈
+---
 
-- **ORM框架**: SQLAlchemy
-- **数据库支持**:
-  - SQLite（同步引擎，开发/小规模使用）
-  - PostgreSQL（异步引擎，生产环境推荐）
-- **设计模式**: Repository 模式
-- **架构层次**: 两层 Repository 设计
+## 3. 模块文件结构
 
-### 1.3 架构层次说明
-
-#### BaseRepository（基础访问层）
-- **职责**: 提供通用的数据库操作，不包含业务逻辑
-- **功能**:
-  - 数据库连接管理
-  - 表创建（`create_tables`）
-  - 会话管理（`get_session`）
-  - 原始SQL执行（`execute_raw_sql`）
-
-#### DatabaseRepository（业务访问层）
-- **职责**: 封装业务相关的数据库操作
-- **功能**:
-  - 业务实体的CRUD操作
-  - 关联关系处理
-  - 业务逻辑封装（如自动创建关联实体）
-
-### 1.4 数据库引擎选择
-
-系统根据数据库URL自动选择引擎类型：
-
-```python
-# SQLite（同步）
-database_url = "sqlite:///path/to/db.db"
-# 使用同步引擎，适合开发和小规模使用
-
-# PostgreSQL（异步）
-database_url = "postgresql://user:pass@host/db"
-# 自动转换为异步引擎，适合生产环境
+```
+database/
+├── __init__.py          # 模块入口，统一导出
+├── models.py            # SQLAlchemy ORM 模型定义
+├── connection.py        # 数据库连接与引擎管理
+├── base_crud.py         # 通用 CRUD 操作基类
+├── entity_repos.py      # 实体仓库（员工、顾客、服务类型、商品、渠道）
+├── business_repos.py    # 业务仓库（服务记录、商品销售、会员卡）
+├── system_repos.py      # 系统仓库（消息、汇总、插件数据）
+└── manager.py           # DatabaseManager 统一门面
 ```
 
-## 二、数据模型设计
+---
 
-### 2.1 模型概览
-
-系统包含 **13个核心数据模型**，分为以下类别：
+## 4. 类关系图
 
 ```mermaid
-graph LR
-    A[数据模型] --> B[基础实体]
-    A --> C[业务记录]
-    A --> D[辅助数据]
-    A --> E[扩展机制]
-    
-    B --> B1[Employee<br/>员工]
-    B --> B2[Customer<br/>顾客]
-    B --> B3[ServiceType<br/>服务类型]
-    B --> B4[Product<br/>商品]
-    B --> B5[ReferralChannel<br/>引流渠道]
-    
-    C --> C1[ServiceRecord<br/>服务记录]
-    C --> C2[ProductSale<br/>商品销售]
-    C --> C3[Membership<br/>会员卡]
-    
-    D --> D1[RawMessage<br/>原始消息]
-    D --> D2[InventoryLog<br/>库存变动]
-    D --> D3[Correction<br/>修正记录]
-    D --> D4[DailySummary<br/>每日汇总]
-    
-    E --> E1[PluginData<br/>插件数据]
-    
-    style B fill:#e1f5ff
-    style C fill:#fff4e1
-    style D fill:#ffe1f5
-    style E fill:#e1ffe1
+classDiagram
+    class DatabaseManager {
+        +conn: DatabaseConnection
+        +staff: StaffRepository
+        +customers: CustomerRepository
+        +service_types: ServiceTypeRepository
+        +products: ProductRepository
+        +channels: ChannelRepository
+        +service_records: ServiceRecordRepository
+        +product_sales: ProductSaleRepository
+        +memberships: MembershipRepository
+        +messages: MessageRepository
+        +summaries: SummaryRepository
+        +plugins: PluginRepository
+        +create_tables()
+        +get_session()
+        +save_raw_message(msg_data) int
+        +update_parse_status(msg_id, status)
+        +save_service_record(data, msg_id) int
+        +save_product_sale(data, msg_id) int
+        +save_membership(data, msg_id) int
+        +save_daily_summary(date, data) int
+        +get_daily_records(date) List~Dict~
+        +get_staff_list(active_only) List~Dict~
+        +get_customer_info(name) Dict
+        +get_channel_list(type) List~Dict~
+        +execute_raw_sql(sql, params)
+    }
+
+    class DatabaseConnection {
+        +database_url: str
+        +engine: Engine
+        +SessionLocal: sessionmaker
+        +is_async: bool
+        +create_tables()
+        +get_session() Session
+        +execute_raw_sql(sql, params)
+    }
+
+    class BaseCRUD {
+        +conn: DatabaseConnection
+        +get_by_id(model, id) T
+        +get_all(model, filters, order_by, limit) List~T~
+        +count(model, filters) int
+        +create(model, **kwargs) T
+        +get_or_create(model, lookup, defaults) T
+        +update_by_id(model, id, **kwargs) T
+        +delete_by_id(model, id) bool
+    }
+
+    class StaffRepository {
+        +get_or_create(name, nickname) Employee
+        +get_active_staff() List~Employee~
+        +deactivate(id) Employee
+        +search(keyword) List~Employee~
+    }
+
+    class CustomerRepository {
+        +get_or_create(name) Customer
+        +search(keyword) List~Customer~
+    }
+
+    class ServiceTypeRepository {
+        +get_or_create(name, price, category) ServiceType
+        +get_by_category(category) List~ServiceType~
+    }
+
+    class ProductRepository {
+        +get_or_create(name, category, price) Product
+        +get_low_stock() List~Product~
+        +update_stock(id, change) Product
+    }
+
+    class ChannelRepository {
+        +get_or_create(name, type) ReferralChannel
+        +get_active_channels(type) List~ReferralChannel~
+    }
+
+    class ServiceRecordRepository {
+        +save(data, msg_id) int
+        +get_by_date(date) List~Dict~
+        +confirm(id) bool
+    }
+
+    class ProductSaleRepository {
+        +save(data, msg_id) int
+        +get_by_date(date) List~Dict~
+    }
+
+    class MembershipRepository {
+        +save(data, msg_id) int
+        +get_active_by_customer(id) List~Membership~
+        +deduct_balance(id, amount) Membership
+        +deduct_session(id, count) Membership
+        +add_points(id, points) Membership
+    }
+
+    class MessageRepository {
+        +save_raw_message(data) int
+        +update_parse_status(id, status)
+        +save_correction(data) int
+    }
+
+    class SummaryRepository {
+        +save(date, data) int
+        +get_by_date(date) DailySummary
+    }
+
+    class PluginRepository {
+        +save(plugin, entity_type, id, key, value) int
+        +get(plugin, entity_type, id, key) Any
+        +delete(plugin, entity_type, id, key)
+    }
+
+    DatabaseManager *-- DatabaseConnection
+    DatabaseManager *-- StaffRepository
+    DatabaseManager *-- CustomerRepository
+    DatabaseManager *-- ServiceTypeRepository
+    DatabaseManager *-- ProductRepository
+    DatabaseManager *-- ChannelRepository
+    DatabaseManager *-- ServiceRecordRepository
+    DatabaseManager *-- ProductSaleRepository
+    DatabaseManager *-- MembershipRepository
+    DatabaseManager *-- MessageRepository
+    DatabaseManager *-- SummaryRepository
+    DatabaseManager *-- PluginRepository
+
+    StaffRepository --|> BaseCRUD
+    CustomerRepository --|> BaseCRUD
+    ServiceTypeRepository --|> BaseCRUD
+    ProductRepository --|> BaseCRUD
+    ChannelRepository --|> BaseCRUD
+    ServiceRecordRepository --|> BaseCRUD
+    ProductSaleRepository --|> BaseCRUD
+    MembershipRepository --|> BaseCRUD
+    MessageRepository --|> BaseCRUD
+    SummaryRepository --|> BaseCRUD
+    PluginRepository --|> BaseCRUD
+
+    BaseCRUD --> DatabaseConnection
 ```
 
-### 2.2 实体关系图（ERD）
+---
+
+## 5. 数据模型（ER 图）
 
 ```mermaid
 erDiagram
-    Employee ||--o{ ServiceRecord : "服务员工"
-    Employee ||--o{ ServiceRecord : "记录员"
-    Employee ||--o{ ProductSale : "记录员"
-    
-    Customer ||--o{ Membership : "拥有"
-    Customer ||--o{ ServiceRecord : "消费"
-    Customer ||--o{ ProductSale : "购买"
-    
-    ServiceType ||--o{ ServiceRecord : "类型"
-    
-    ReferralChannel ||--o{ ServiceRecord : "引流渠道"
-    
-    Membership ||--o{ ServiceRecord : "使用"
-    
-    Product ||--o{ ProductSale : "销售"
-    Product ||--o{ InventoryLog : "库存变动"
-    
-    RawMessage ||--o{ ServiceRecord : "来源"
-    RawMessage ||--o{ ProductSale : "来源"
-    RawMessage ||--o{ Correction : "修正"
-    
-    Employee {
+    employees {
         int id PK
         string name
         string wechat_nickname
-        string role
+        string wechat_alias
+        string role "staff/manager/bot"
         decimal commission_rate
+        bool is_active
         json extra_data
+        datetime created_at
     }
-    
-    Customer {
+
+    customers {
         int id PK
         string name
         string phone
         text notes
         json extra_data
+        datetime created_at
     }
-    
-    Membership {
+
+    memberships {
         int id PK
         int customer_id FK
         string card_type
         decimal total_amount
         decimal balance
         int remaining_sessions
+        date opened_at
         date expires_at
         int points
+        bool is_active
         json extra_data
+        datetime created_at
     }
-    
-    ServiceType {
+
+    service_types {
         int id PK
         string name UK
         decimal default_price
         string category
     }
-    
-    ReferralChannel {
+
+    referral_channels {
         int id PK
         string name
-        string channel_type
+        string channel_type "internal/external/platform"
+        string contact_info
         decimal commission_rate
-        string commission_type
+        string commission_type "percentage/fixed"
+        bool is_active
+        text notes
+        json extra_data
+        datetime created_at
     }
-    
-    ServiceRecord {
+
+    service_records {
         int id PK
         int customer_id FK
         int employee_id FK
@@ -182,453 +301,418 @@ erDiagram
         date service_date
         decimal amount
         decimal commission_amount
+        string commission_to
         decimal net_amount
+        text notes
+        decimal parse_confidence
+        bool confirmed
+        datetime confirmed_at
         json extra_data
+        datetime created_at
     }
-    
-    Product {
+
+    products {
         int id PK
         string name
         string category
         decimal unit_price
         int stock_quantity
+        int low_stock_threshold
         json extra_data
+        datetime created_at
     }
-    
-    ProductSale {
+
+    product_sales {
         int id PK
         int product_id FK
         int customer_id FK
         int recorder_id FK
         int raw_message_id FK
-        date sale_date
         int quantity
+        decimal unit_price
         decimal total_amount
+        date sale_date
+        text notes
+        decimal parse_confidence
+        bool confirmed
+        datetime created_at
     }
-    
-    InventoryLog {
+
+    inventory_logs {
         int id PK
         int product_id FK
-        string change_type
+        string change_type "sale/restock/adjustment"
         int quantity_change
         int quantity_after
+        int reference_id
+        text notes
+        datetime created_at
     }
-    
-    RawMessage {
+
+    raw_messages {
         int id PK
         string wechat_msg_id UK
         string sender_nickname
+        string sender_wechat_id
         text content
+        string msg_type
+        string group_id
         datetime timestamp
-        string parse_status
+        bool is_at_bot
+        bool is_business
+        string parse_status "pending/parsed/failed/ignored"
         json parse_result
+        text parse_error
+        datetime created_at
     }
-    
-    PluginData {
+
+    corrections {
+        int id PK
+        string original_record_type
+        int original_record_id
+        string correction_type
+        json old_value
+        json new_value
+        text reason
+        int raw_message_id FK
+        datetime created_at
+    }
+
+    daily_summaries {
+        int id PK
+        date summary_date UK
+        decimal total_service_revenue
+        decimal total_product_revenue
+        decimal total_commissions
+        decimal net_revenue
+        int service_count
+        int product_sale_count
+        int new_members
+        decimal membership_revenue
+        text summary_text
+        bool confirmed
+        datetime created_at
+    }
+
+    plugin_data {
         int id PK
         string plugin_name
         string entity_type
         int entity_id
         string data_key
         json data_value
+        datetime created_at
+        datetime updated_at
     }
+
+    customers ||--o{ memberships : "has"
+    customers ||--o{ service_records : "receives"
+    customers ||--o{ product_sales : "purchases"
+    employees ||--o{ service_records : "serves"
+    employees ||--o{ service_records : "records"
+    employees ||--o{ product_sales : "records"
+    service_types ||--o{ service_records : "categorizes"
+    referral_channels ||--o{ service_records : "refers"
+    memberships ||--o{ service_records : "pays"
+    products ||--o{ product_sales : "sold_as"
+    products ||--o{ inventory_logs : "tracks"
+    raw_messages ||--o{ service_records : "parsed_from"
+    raw_messages ||--o{ product_sales : "parsed_from"
+    raw_messages ||--o{ corrections : "triggers"
 ```
 
-### 2.3 核心表设计
+---
 
-#### 2.3.1 基础实体表
+## 6. 分层设计详解
 
-##### Employee（员工表）
-- **用途**: 存储员工基本信息
-- **关键字段**:
-  - `name`: 员工姓名
-  - `wechat_nickname`: 微信昵称（用于识别）
-  - `role`: 角色（staff/manager/bot）
-  - `commission_rate`: 提成率（0-100）
-  - `extra_data`: JSON扩展字段（部门、技能等级等）
+### 6.1 基础设施层（DatabaseConnection）
 
-##### Customer（顾客表）
-- **用途**: 存储顾客基本信息
-- **关键字段**:
-  - `name`: 顾客姓名
-  - `phone`: 联系电话
-  - `notes`: 备注信息
-  - `extra_data`: JSON扩展字段（VIP等级、来源渠道、标签等）
+**职责**：数据库连接的创建和管理，完全不含业务逻辑。
 
-##### ServiceType（服务类型表）
-- **用途**: 服务类型字典表
-- **关键字段**:
-  - `name`: 服务类型名称（唯一）
-  - `default_price`: 默认价格
-  - `category`: 服务类别
+```mermaid
+flowchart LR
+    URL["database_url"] --> DETECT{"sqlite:// ?"}
+    DETECT -->|Yes| SYNC["同步引擎<br/>create_engine()"]
+    DETECT -->|No| ASYNC["异步引擎<br/>create_async_engine()"]
+    SYNC --> SESSION["sessionmaker"]
+    ASYNC --> ASESSION["async_sessionmaker"]
+```
 
-##### Product（商品表）
-- **用途**: 存储商品信息
-- **关键字段**:
-  - `name`: 商品名称
-  - `category`: 商品类别
-  - `unit_price`: 单价
-  - `stock_quantity`: 库存数量
-  - `low_stock_threshold`: 低库存阈值
-  - `extra_data`: JSON扩展字段（批次、供应商等）
+- **SQLite**：同步引擎，适合开发和小规模部署
+- **PostgreSQL**：异步引擎（asyncpg），适合生产环境
+- 根据 URL 自动适配，上层代码无需关心
 
-##### ReferralChannel（引流渠道表）
-- **用途**: 管理外部引流渠道，支持精准提成统计
-- **关键字段**:
-  - `name`: 渠道名称（如：美团、大众点评、李哥）
-  - `channel_type`: 渠道类型（internal/external/platform）
-  - `commission_rate`: 默认提成率
-  - `commission_type`: 提成类型（percentage/fixed）
+### 6.2 通用 CRUD 层（BaseCRUD）
 
-#### 2.3.2 业务记录表
+**职责**：提供模型无关的通用数据库操作。
 
-##### ServiceRecord（服务记录表）⭐ 核心业务表
-- **用途**: 记录服务消费，是系统的核心业务表
-- **关键字段**:
-  - `customer_id`: 顾客ID
-  - `employee_id`: 服务员工ID
-  - `recorder_id`: 记录员ID
-  - `service_type_id`: 服务类型ID
-  - `referral_channel_id`: 引流渠道ID（新增）
-  - `membership_id`: 使用的会员卡ID
-  - `service_date`: 服务日期
-  - `amount`: 服务金额
-  - `commission_amount`: 提成金额
-  - `net_amount`: 净收入（金额-提成）
-  - `confirmed`: 是否已确认
-  - `extra_data`: JSON扩展字段（预约ID、服务时长等）
+所有领域仓库继承 `BaseCRUD`，获得以下能力：
 
-##### ProductSale（商品销售表）
-- **用途**: 记录商品销售
-- **关键字段**:
-  - `product_id`: 商品ID
-  - `customer_id`: 顾客ID
-  - `recorder_id`: 记录员ID
-  - `sale_date`: 销售日期
-  - `quantity`: 销售数量
-  - `total_amount`: 总金额
+| 方法 | 功能 | 说明 |
+|------|------|------|
+| `get_by_id` | 按 ID 查询 | 返回 ORM 对象 |
+| `get_all` | 条件查询 | 支持过滤、排序、分页 |
+| `count` | 统计计数 | 支持过滤条件 |
+| `create` | 创建记录 | 自动提交或在事务中 flush |
+| `get_or_create` | 查找或创建 | 幂等操作 |
+| `update_by_id` | 按 ID 更新 | 返回更新后的对象 |
+| `delete_by_id` | 按 ID 删除 | 返回是否成功 |
 
-##### Membership（会员卡表）
-- **用途**: 存储会员卡信息
-- **关键字段**:
-  - `customer_id`: 顾客ID
-  - `card_type`: 卡类型（如：理疗卡、头疗卡）
-  - `total_amount`: 总金额
-  - `balance`: 余额
-  - `remaining_sessions`: 剩余次数
-  - `expires_at`: 到期日期
-  - `points`: 积分
+**事务支持**：所有方法支持外部传入 `session` 参数，用于事务组合。未传入时自动管理会话生命周期。
 
-#### 2.3.3 辅助数据表
+### 6.3 领域仓库层
 
-##### RawMessage（原始消息表）
-- **用途**: 存储从微信群聊接收的原始消息，用于追溯和审计
-- **关键字段**:
-  - `wechat_msg_id`: 微信消息ID（唯一，用于去重）
-  - `sender_nickname`: 发送者昵称
-  - `content`: 消息内容
-  - `timestamp`: 消息时间戳
-  - `parse_status`: 解析状态（pending/parsed/failed/ignored）
-  - `parse_result`: 解析结果（JSON）
+按职责分为三类：
 
-##### InventoryLog（库存变动表）
-- **用途**: 记录库存变动情况
-- **关键字段**:
-  - `product_id`: 商品ID
-  - `change_type`: 变动类型（sale/restock/adjustment）
-  - `quantity_change`: 数量变动（正数入库，负数出库）
-  - `quantity_after`: 变动后库存数量
+```mermaid
+graph LR
+    subgraph "实体仓库 entity_repos.py"
+        S[StaffRepository]
+        CU[CustomerRepository]
+        ST[ServiceTypeRepository]
+        P[ProductRepository]
+        CH[ChannelRepository]
+    end
 
-##### Correction（修正记录表）
-- **用途**: 记录对已保存业务记录的修正操作
-- **关键字段**:
-  - `original_record_type`: 原始记录类型（service_records/product_sales）
-  - `original_record_id`: 原始记录ID
-  - `correction_type`: 修正类型（date_change/amount_change/delete）
-  - `old_value`: 旧值（JSON）
-  - `new_value`: 新值（JSON）
+    subgraph "业务仓库 business_repos.py"
+        SR[ServiceRecordRepository]
+        PS[ProductSaleRepository]
+        M[MembershipRepository]
+    end
 
-##### DailySummary（每日汇总表）
-- **用途**: 存储每日业务汇总数据，用于快速查询和报表
-- **关键字段**:
-  - `summary_date`: 汇总日期（唯一）
-  - `total_service_revenue`: 服务总收入
-  - `total_product_revenue`: 商品总收入
-  - `total_commissions`: 总提成支出
-  - `net_revenue`: 净收入
-  - `service_count`: 服务记录数
-  - `product_sale_count`: 商品销售记录数
+    subgraph "系统仓库 system_repos.py"
+        MSG[MessageRepository]
+        SUM[SummaryRepository]
+        PLG[PluginRepository]
+    end
+```
 
-#### 2.3.4 扩展机制表
+#### 实体仓库（字典数据）
+管理基础实体，是各类商业模式的**共性部分**：
+- 每个业态都有员工、顾客、服务类型、商品、渠道
 
-##### PluginData（插件数据表）
-- **用途**: 支持完全自定义的扩展数据存储，用于插件化的业务扩展
-- **关键字段**:
-  - `plugin_name`: 插件标识
-  - `entity_type`: 实体类型（employee/customer/product等）
-  - `entity_id`: 关联实体ID
-  - `data_key`: 数据键
-  - `data_value`: 数据值（JSON）
-- **唯一约束**: (plugin_name, entity_type, entity_id, data_key)
+#### 业务仓库（交易数据）
+管理核心业务记录，自动处理关联实体创建：
+- `save()` 方法会自动创建/查找顾客、服务类型、员工等关联实体
+- 上层代码只需传入名称字符串，无需先查找 ID
 
-## 三、扩展机制设计
+#### 系统仓库（辅助数据）
+管理系统级数据，用于消息追溯、审计和扩展：
+- 消息去重、解析状态跟踪
+- 每日汇总快照（幂等更新）
+- 插件数据存储（可扩展）
 
-### 3.1 三层扩展机制
+### 6.4 门面层（DatabaseManager）
 
-系统提供了三个层次的扩展能力，满足不同复杂度的业务需求：
+**职责**：组合所有子仓库，提供两套 API。
+
+```mermaid
+flowchart TB
+    subgraph "DatabaseManager 门面"
+        direction TB
+        FACADE["便捷方法<br/>save_service_record()<br/>get_daily_records()<br/>save_raw_message()<br/>..."]
+        SUBS["子仓库属性<br/>db.staff<br/>db.customers<br/>db.service_types<br/>db.products<br/>db.channels<br/>db.service_records<br/>db.product_sales<br/>db.memberships<br/>db.messages<br/>db.summaries<br/>db.plugins"]
+    end
+
+    CALLER1["上层业务代码"] -->|"高频操作"| FACADE
+    CALLER2["精细控制场景"] -->|"细粒度操作"| SUBS
+```
+
+**API 设计原则**：
+- **便捷方法**：覆盖高频操作（保存记录、查询日报），返回字典/基本类型
+- **子仓库访问**：用于低频或细粒度操作（如 `db.staff.search("张")`），返回 ORM 对象
+
+---
+
+## 7. 扩展机制
+
+### 7.1 三层扩展
 
 ```mermaid
 graph TB
-    A[扩展需求] --> B{扩展复杂度}
-    B -->|简单字段| C[extra_data<br/>JSON字段]
-    B -->|业务实体| D[业务表扩展<br/>ReferralChannel等]
-    B -->|完全自定义| E[PluginData<br/>插件数据表]
-    
-    C --> C1[适用场景<br/>部门、等级、标签等]
-    D --> D1[适用场景<br/>引流渠道、统计需求]
-    E --> E1[适用场景<br/>历史记录、复杂结构]
-    
-    style C fill:#e1f5ff
-    style D fill:#fff4e1
-    style E fill:#ffe1f5
+    E1["第一层：extra_data 字段<br/>每个实体模型都有 JSON 扩展字段<br/>存储业态特有属性"]
+    E2["第二层：PluginData 表<br/>完全自定义的 KV 存储<br/>按(plugin, entity_type, entity_id, key)索引"]
+    E3["第三层：子类继承<br/>继承现有仓库，添加业态特有方法<br/>通过 Adapter 模式集成"]
+
+    E1 --> E2 --> E3
+
+    style E1 fill:#e1f5fe
+    style E2 fill:#fff3e0
+    style E3 fill:#e8f5e9
 ```
 
-### 3.2 JSON扩展字段（extra_data）
+### 7.2 多业态适配示例
 
-**适用场景**: 简单字段扩展
+以下展示不同业态如何复用核心模型：
 
-- **支持的表**:** Employee, Customer, Membership, Product, ServiceRecord
-- **使用方式**: 直接存储JSON数据
-- **优点**: 无需修改数据库结构，查询方便
-- **缺点**: 不适合复杂查询和关联
+| 核心概念 | 理发店 | 健身房 | 理疗馆 | 餐厅 |
+|----------|--------|--------|--------|------|
+| Employee | 理发师/前台 | 教练/前台 | 技师/管理员 | 厨师/服务员 |
+| Customer | 顾客 | 会员 | 患者 | 食客 |
+| ServiceType | 剪发/染发/烫发 | 私教/团课/体测 | 头疗/理疗/按摩 | 堂食/外卖 |
+| Product | 洗发水/护发素 | 蛋白粉/运动装备 | 保健品/精油 | 菜品/饮品 |
+| Membership | 储值卡/VIP卡 | 年卡/季卡/次卡 | 理疗卡/储值卡 | 储值卡/优惠卡 |
+| Channel | 美团/点评 | 美团/小红书 | 美团/朋友推荐 | 美团/饿了么 |
+| extra_data | 发型偏好 | 体测数据 | 病史记录 | 口味偏好 |
+| PluginData | 过敏信息 | 课程评价 | 治疗方案 | 过敏原 |
 
-**示例**:
-```python
-# Employee扩展：部门、技能等级
-employee.extra_data = {
-    "department": "理疗部",
-    "skill_level": 5,
-    "certifications": ["按摩师资格证"]
-}
+---
 
-# Customer扩展：VIP等级、来源渠道
-customer.extra_data = {
-    "vip_level": "gold",
-    "source": "美团",
-    "tags": ["重要客户"]
-}
-```
+## 8. 数据流
 
-### 3.3 业务表扩展
-
-**适用场景**: 需要统计、分析的业务实体
-
-- **示例**: ReferralChannel（引流渠道表）
-- **优点**: 结构化，支持复杂查询和统计
-- **缺点**: 需要修改数据库结构
-
-**示例**:
-```python
-# 创建引流渠道
-channel = repo.get_or_create_referral_channel(
-    name="美团",
-    channel_type="platform",
-    commission_rate=15.0
-)
-
-# 在服务记录中使用
-service_record.referral_channel_id = channel.id
-```
-
-### 3.4 插件数据表（PluginData）
-
-**适用场景**: 完全自定义的扩展需求
-
-- **特点**: 通过(plugin_name, entity_type, entity_id, data_key)唯一约束
-- **优点**: 完全灵活，支持复杂查询
-- **缺点**: 需要额外的表查询
-
-**示例**:
-```python
-# 保存插件数据
-repo.save_plugin_data(
-    plugin_name="hair_salon",
-    entity_type="employee",
-    entity_id=employee.id,
-    data_key="skills",
-    data_value=["剪发", "染发", "烫发"]
-)
-
-# 读取插件数据
-skills = repo.get_plugin_data(
-    plugin_name="hair_salon",
-    entity_type="employee",
-    entity_id=employee.id,
-    data_key="skills"
-)
-```
-
-## 四、数据流转设计
-
-### 4.1 消息处理流程
+### 8.1 消息解析入库流程
 
 ```mermaid
 sequenceDiagram
-    participant WX as 微信群聊
-    participant Parser as 消息解析器
-    participant Repo as DatabaseRepository
-    participant DB as 数据库
-    
-    WX->>Parser: 接收原始消息
-    Parser->>Repo: save_raw_message()
-    Repo->>DB: 保存RawMessage
-    DB-->>Repo: 返回msg_id
-    
-    Parser->>Parser: 解析业务数据
-    Parser->>Repo: save_service_record()
-    Repo->>DB: 自动创建关联实体
-    Repo->>DB: 保存ServiceRecord
-    DB-->>Repo: 返回record_id
-    
-    Parser->>Repo: update_parse_status()
-    Repo->>DB: 更新解析状态
+    participant WC as 微信群聊
+    participant PP as Pipeline
+    participant DM as DatabaseManager
+    participant MR as MessageRepo
+    participant SR as ServiceRecordRepo
+    participant ER as EntityRepos
+
+    WC->>PP: 原始消息
+    PP->>DM: save_raw_message(msg_data)
+    DM->>MR: save_raw_message(msg_data)
+    MR-->>DM: msg_id
+    DM-->>PP: msg_id
+
+    PP->>PP: LLM 解析
+
+    PP->>DM: save_service_record(data, msg_id)
+    DM->>SR: save(data, msg_id)
+    SR->>ER: customers.get_or_create("张三")
+    ER-->>SR: customer
+    SR->>ER: service_types.get_or_create("头疗")
+    ER-->>SR: service_type
+    SR->>SR: INSERT service_record
+    SR-->>DM: record_id
+    DM-->>PP: record_id
+
+    PP->>DM: update_parse_status(msg_id, "parsed")
+    DM->>MR: update_parse_status(msg_id, "parsed")
 ```
 
-### 4.2 服务记录创建流程
+### 8.2 日报查询流程
 
 ```mermaid
-flowchart TD
-    A[接收服务记录数据] --> B{检查关联实体}
-    B -->|不存在| C[自动创建Customer]
-    B -->|不存在| D[自动创建ServiceType]
-    B -->|不存在| E[自动创建Employee]
-    B -->|存在| F[使用现有实体]
-    
-    C --> G[处理引流渠道]
-    D --> G
-    E --> G
-    F --> G
-    
-    G --> H{是否有referral_channel_id?}
-    H -->|有| I[使用指定渠道]
-    H -->|无| J{是否有commission_to?}
-    J -->|有| K[自动创建/查找渠道]
-    J -->|无| L[不关联渠道]
-    
-    I --> M[创建ServiceRecord]
-    K --> M
-    L --> M
-    
-    M --> N[计算net_amount]
-    N --> O[保存到数据库]
-    
-    style A fill:#e1f5ff
-    style M fill:#fff4e1
-    style O fill:#e1ffe1
+sequenceDiagram
+    participant BIZ as SummaryService
+    participant DM as DatabaseManager
+    participant SRR as ServiceRecordRepo
+    participant PSR as ProductSaleRepo
+
+    BIZ->>DM: get_daily_records(date)
+    DM->>SRR: get_by_date(date)
+    SRR-->>DM: service_dicts[]
+    DM->>PSR: get_by_date(date)
+    PSR-->>DM: sale_dicts[]
+    DM-->>BIZ: service_dicts + sale_dicts
 ```
 
-## 五、关键设计特点
+---
 
-### 5.1 自动关联实体创建
+## 9. 使用示例
 
-系统在保存业务记录时，会自动创建不存在的关联实体：
-
-- **Customer**: 根据姓名自动创建
-- **ServiceType**: 根据名称自动创建
-- **Employee**: 根据姓名或微信昵称自动创建
-- **ReferralChannel**: 根据名称自动创建（向后兼容）
-
-### 5.2 向后兼容设计
-
-- **commission_to字段**: 保留字符串字段，同时推荐使用`referral_channel_id`
-- **可选字段**: 新增字段都设为可选，不影响现有数据
-- **渐进式升级**: 支持新旧系统并存
-
-### 5.3 数据追溯能力
-
-- **RawMessage关联**: 所有业务记录都可以追溯到原始消息
-- **解析状态跟踪**: 记录消息的解析状态和结果
-- **修正记录**: 记录所有数据修正操作
-
-### 5.4 灵活的扩展机制
-
-- **三层扩展**: JSON字段 + 业务表 + 插件表
-- **无需修改结构**: 通过扩展机制快速适配新业务
-- **插件化支持**: PluginData表支持完全自定义扩展
-
-## 六、数据库操作示例
-
-### 6.1 基础操作
+### 9.1 基本使用
 
 ```python
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 
-# 初始化
-repo = DatabaseRepository()
+db = DatabaseManager("sqlite:///data/store.db")
+db.create_tables()
 
-# 创建表
-repo.create_tables()
-
-# 获取会话
-session = repo.get_session()
-```
-
-### 6.2 业务操作
-
-```python
 # 保存服务记录（自动创建关联实体）
-record_data = {
-    "customer_name": "王老师",
-    "service_or_product": "理疗",
+record_id = db.save_service_record({
+    "customer_name": "张三",
+    "service_or_product": "头疗",
     "date": "2024-01-28",
     "amount": 198,
-    "referral_channel_id": channel.id
-}
-record_id = repo.save_service_record(record_data, raw_message_id=1)
+    "commission": 20,
+    "commission_to": "李哥",
+}, raw_message_id=1)
 
-# 查询指定日期的记录
-from datetime import date
-records = repo.get_records_by_date(date(2024, 1, 28))
+# 查询日报
+records = db.get_daily_records("2024-01-28")
+for r in records:
+    print(f"{r['customer_name']} {r['type']} ¥{r['amount']}")
 ```
 
-### 6.3 扩展数据操作
+### 9.2 子仓库操作
 
 ```python
-# 使用JSON扩展字段
-employee = repo.get_or_create_employee("张师傅")
-employee.extra_data = {"department": "理疗部", "skill_level": 5}
+# 员工管理
+employee = db.staff.get_or_create("Tony", "tony_hair")
+staff_list = db.staff.get_active_staff()
 
-# 使用插件数据表
-repo.save_plugin_data(
-    plugin_name="hair_salon",
-    entity_type="employee",
-    entity_id=employee.id,
-    data_key="skills",
-    data_value=["剪发", "染发"]
-)
+# 顾客搜索
+results = db.customers.search("张")
+
+# 商品库存
+db.products.update_stock(product_id=1, quantity_change=-5)
+low_stock = db.products.get_low_stock()
+
+# 会员卡操作
+db.memberships.deduct_balance(membership_id=1, amount=198)
+db.memberships.add_points(membership_id=1, points=20)
+
+# 引流渠道
+db.channels.get_or_create("美团", "platform", commission_rate=15.0)
+platforms = db.channels.get_active_channels("platform")
 ```
 
-## 七、总结
+### 9.3 插件数据扩展
 
-### 7.1 架构优势
+```python
+# 存储健身房特有数据：体测记录
+db.plugins.save("gym", "customer", customer_id, "body_fat", 18.5)
+db.plugins.save("gym", "customer", customer_id, "weight", 75.0)
 
-1. **统一接口**: Repository模式提供统一的数据库访问接口
-2. **多引擎支持**: 自动适配SQLite和PostgreSQL
-3. **业务封装**: DatabaseRepository封装业务逻辑，简化使用
-4. **扩展灵活**: 三层扩展机制满足不同需求
+# 读取
+body_fat = db.plugins.get("gym", "customer", customer_id, "body_fat")
+all_data = db.plugins.get("gym", "customer", customer_id)
+# → {"body_fat": 18.5, "weight": 75.0}
 
-### 7.2 设计亮点
+# 删除
+db.plugins.delete("gym", "customer", customer_id, "body_fat")
+```
 
-1. **自动关联**: 自动创建关联实体，简化业务代码
-2. **向后兼容**: 保留旧字段，支持渐进式升级
-3. **数据追溯**: 完整的消息和修正记录追溯
-4. **扩展机制**: JSON字段 + 业务表 + 插件表三层扩展
+---
 
-### 7.3 适用场景
+## 10. 设计决策记录
 
-- ✅ 服务业门店（理疗店、理发店、健身房等）
-- ✅ 需要提成管理的场景
-- ✅ 需要会员卡管理的场景
-- ✅ 需要库存管理的场景
-- ✅ 需要快速扩展的业务场景
+### Q1: 为什么用 Facade 模式而非直接暴露仓库？
 
+**决策**：`DatabaseManager` 作为统一门面，组合所有子仓库。
+
+**理由**：
+- 上层代码只需持有一个对象 `db`，而非 12 个独立仓库
+- 便捷方法简化高频操作（如 `db.save_service_record()` 而非 `db.service_records.save()`）
+- 子仓库仍可通过属性直接访问，保留细粒度控制能力
+
+### Q2: 为什么 `extra_data` 和 `PluginData` 并存？
+
+**决策**：模型内置 `extra_data` JSON 字段 + 独立 `PluginData` 表。
+
+**理由**：
+- `extra_data`：轻量级扩展，与实体紧密关联，查询时一并返回
+- `PluginData`：完全独立的 KV 存储，不修改核心模型，适合插件化扩展
+- 两者互补：简单扩展用 `extra_data`，复杂扩展用 `PluginData`
+
+### Q3: 为什么业务仓库自动创建关联实体？
+
+**决策**：`ServiceRecordRepository.save()` 传入 `customer_name` 字符串即可，自动查找或创建顾客。
+
+**理由**：
+- 简化上层代码，无需先查 ID 再保存
+- 适配微信群聊场景：LLM 解析出的是名称字符串而非 ID
+- 幂等操作（`get_or_create`），重复创建安全
+
+### Q4: 为什么 database 模块不包含 Agent 工具注册？
+
+**决策**：Agent 工具注册逻辑放在 `agent/` 模块或上层入口，不放在 `database/` 内。
+
+**理由**：
+- `database/` 是独立的数据访问层，不应依赖 `agent/` 的注册机制
+- Agent 集成是上层关注点，由调用方决定如何暴露 DatabaseManager 的方法
+- 保持模块间单向依赖：`agent/` → `database/`，而非反向

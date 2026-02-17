@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 from interface.base import Interface
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 
 
 # ========== Pydantic 模型定义 ==========
@@ -79,7 +79,7 @@ class WebAPI(Interface):
     实现 Interface 接口，可以统一管理
     """
     
-    def __init__(self, db_repo: DatabaseRepository, host: str = "0.0.0.0", port: int = 8080):
+    def __init__(self, db_repo: DatabaseManager, host: str = "0.0.0.0", port: int = 8080):
         """
         Args:
             db_repo: 数据库仓库实例

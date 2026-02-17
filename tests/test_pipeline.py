@@ -4,7 +4,7 @@ from unittest.mock import Mock, AsyncMock
 from datetime import datetime
 from parsing.preprocessor import MessagePreProcessor
 from parsing.pipeline import MessagePipeline, ProcessResult
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 
 
 class MockLLMParser:

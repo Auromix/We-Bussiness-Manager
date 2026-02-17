@@ -5,7 +5,7 @@
 from datetime import date
 from typing import Callable, Optional
 from loguru import logger
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 from core.business_adapter import BusinessLogicAdapter
 
 
@@ -18,7 +18,7 @@ class SchedulerTasks:
     def __init__(
         self,
         business_adapter: BusinessLogicAdapter,
-        db_repo: DatabaseRepository,
+        db_repo: DatabaseManager,
         message_sender: Optional[Callable[[str, str], None]] = None
     ):
         """

@@ -25,8 +25,8 @@ sys.path.insert(0, str(project_root))
 from agent import Agent, create_provider
 from agent.functions.registry import FunctionRegistry
 from agent.functions.discovery import agent_callable
-from db.repository import DatabaseRepository
-from db.models import ServiceRecord, Membership, Customer, Employee, ProductSale
+from database import DatabaseManager
+from database.models import ServiceRecord, Membership, Customer, Employee, ProductSale
 from loguru import logger
 
 # 配置日志
@@ -38,10 +38,10 @@ logger.add(
 )
 
 # 全局数据库仓库实例
-repo: Optional[DatabaseRepository] = None
+repo: Optional[DatabaseManager] = None
 
 
-def init_database() -> DatabaseRepository:
+def init_database() -> DatabaseManager:
     """初始化数据库"""
     global repo
     
@@ -52,7 +52,7 @@ def init_database() -> DatabaseRepository:
     db_path = data_dir / "gym_agent_example.db"
     db_url = f"sqlite:///{db_path}"
     
-    repo = DatabaseRepository(database_url=db_url)
+    repo = DatabaseManager(database_url=db_url)
     repo.create_tables()
     
     # 初始化基础数据
@@ -66,24 +66,24 @@ def _init_base_data():
     """初始化基础数据（员工、服务类型等）"""
     with repo.get_session() as session:
         # 创建员工
-        trainer = repo.get_or_create_employee("李教练", "trainer_li", session=session)
+        trainer = repo.staff.get_or_create("李教练", "trainer_li", session=session)
         trainer.role = "manager"
         trainer.commission_rate = 40.0
         
-        receptionist = repo.get_or_create_employee("小王", "reception_wang", session=session)
+        receptionist = repo.staff.get_or_create("小王", "reception_wang", session=session)
         receptionist.role = "staff"
         
         # 创建服务类型
-        repo.get_or_create_service_type("私教课程", 300.0, "training", session=session)
-        repo.get_or_create_service_type("团课", 50.0, "class", session=session)
+        repo.service_types.get_or_create("私教课程", 300.0, "training", session=session)
+        repo.service_types.get_or_create("团课", 50.0, "class", session=session)
         
         # 创建商品
-        repo.get_or_create_product("蛋白粉", "supplement", 200.0, session=session)
-        repo.get_or_create_product("运动护腕", "equipment", 50.0, session=session)
+        repo.products.get_or_create("蛋白粉", "supplement", 200.0, session=session)
+        repo.products.get_or_create("运动护腕", "equipment", 50.0, session=session)
         
         # 创建引流渠道
-        repo.get_or_create_referral_channel("美团", "platform", None, 15.0, session=session)
-        repo.get_or_create_referral_channel("朋友推荐", "external", None, 10.0, session=session)
+        repo.channels.get_or_create("美团", "platform", None, 15.0, session=session)
+        repo.channels.get_or_create("朋友推荐", "external", None, 10.0, session=session)
         
         session.commit()
 
@@ -120,7 +120,7 @@ def record_service_income(
         trainer_channel_id = None
         if trainer_name and "私教" in service_type:
             # 获取私教渠道
-            trainer_channel = repo.get_or_create_referral_channel(
+            trainer_channel = repo.channels.get_or_create(
                 trainer_name, "internal", None, 40.0
             )
             trainer_channel_id = trainer_channel.id
@@ -337,7 +337,7 @@ def query_daily_income(date_str: Optional[str] = None) -> dict:
             ).filter(ProductSale.sale_date == query_date).first()
             
             # 获取详细记录
-            records = repo.get_records_by_date(query_date)
+            records = repo.get_daily_records(query_date)
         
         result = {
             "date": str(query_date),
@@ -435,7 +435,7 @@ def query_trainer_commission(
     try:
         with repo.get_session() as session:
             from sqlalchemy import func
-            from db.models import ReferralChannel
+            from database.models import ReferralChannel
             
             query = session.query(
                 ReferralChannel.name.label("trainer"),

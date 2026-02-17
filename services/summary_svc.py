@@ -1,13 +1,13 @@
 """汇总报表服务"""
 from datetime import date, datetime, timedelta
 from typing import Dict, List
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 
 
 class SummaryService:
     """汇总服务"""
     
-    def __init__(self, db_repo: DatabaseRepository):
+    def __init__(self, db_repo: DatabaseManager):
         self.db = db_repo
     
     def generate_daily_summary(self, target_date: date = None) -> str:
@@ -15,7 +15,7 @@ class SummaryService:
         if target_date is None:
             target_date = date.today()
         
-        records = self.db.get_records_by_date(target_date)
+        records = self.db.get_daily_records(target_date)
         
         service_records = [r for r in records if r['type'] == 'service']
         product_records = [r for r in records if r['type'] == 'product_sale']
@@ -70,7 +70,7 @@ class SummaryService:
         
         current_date = start_date
         while current_date <= end_date:
-            records = self.db.get_records_by_date(current_date)
+            records = self.db.get_daily_records(current_date)
             service_records = [r for r in records if r['type'] == 'service']
             product_records = [r for r in records if r['type'] == 'product_sale']
             

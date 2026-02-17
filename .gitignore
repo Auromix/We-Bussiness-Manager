@@ -7,13 +7,18 @@ __pycache__/
 env/
 venv/
 ENV/
+env.bak/
+venv.bak/
 build/
 dist/
 *.egg-info/
+.eggs/
+*.egg
 
 # Environment
 .env
 .env.local
+.env.*.local
 
 # Database
 *.db
@@ -26,6 +31,8 @@ data/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
 # Logs
 *.log
@@ -33,6 +40,11 @@ logs/
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
 # Testing
@@ -42,7 +54,23 @@ htmlcov/
 .pytest_cache/
 .tox/
 *.cover
+.hypothesis/
 
 # Debug files
 debug_*.py
+*.orig
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
 

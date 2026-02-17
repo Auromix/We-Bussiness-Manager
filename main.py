@@ -4,7 +4,7 @@ import sys
 import os
 from loguru import logger
 from config.settings import settings
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 from parsing.preprocessor import MessagePreProcessor
 from parsing.llm_parser import create_llm_parser
 from parsing.pipeline import MessagePipeline
@@ -51,7 +51,7 @@ def main():
     
     # 初始化数据库
     logger.info("Initializing database...")
-    db_repo = DatabaseRepository()
+    db_repo = DatabaseManager()
     db_repo.create_tables()
     
     # 初始化消息预处理

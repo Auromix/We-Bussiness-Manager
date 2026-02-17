@@ -4,7 +4,7 @@ from datetime import datetime
 from loguru import logger
 from parsing.preprocessor import MessagePreProcessor
 from parsing.llm_parser import LLMParser
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 from core.business_adapter import BusinessLogicAdapter
 
 
@@ -25,7 +25,7 @@ class MessagePipeline:
     """
     
     def __init__(self, preprocessor: MessagePreProcessor, llm_parser: LLMParser, 
-                 db_repo: DatabaseRepository, business_adapter: BusinessLogicAdapter):
+                 db_repo: DatabaseManager, business_adapter: BusinessLogicAdapter):
         self.preprocessor = preprocessor
         self.llm_parser = llm_parser
         self.db = db_repo

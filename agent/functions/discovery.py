@@ -125,21 +125,21 @@ def register_instance_methods(
             将使用 instance.__class__.__name__。
         prefix: 可选的函数名前缀。如果不提供，将使用
             "{class_name.lower()}_" 作为前缀。例如，如果 class_name 是
-            "DatabaseRepository"，prefix 默认为 "databaserepository_"。
+            "DatabaseManager"，prefix 默认为 "databasemanager_"。
 
     Example:
         ```python
-        db_repo = DatabaseRepository()
+        db = DatabaseManager()
         register_instance_methods(
             registry,
-            db_repo,
-            class_name="DatabaseRepository",
+            db,
+            class_name="DatabaseManager",
             prefix="db_"
         )
         # 会注册以下方法（假设它们存在）:
-        # - db_get_customer
+        # - db_get_customer_info
         # - db_save_service_record
-        # - db_get_records_by_date
+        # - db_get_daily_records
         # 等等...
         ```
 
@@ -333,18 +333,18 @@ def register_class_methods(
     Example:
         ```python
         # 绑定到实例
-        db_repo = DatabaseRepository()
+        db = DatabaseManager()
         register_class_methods(
             registry,
-            DatabaseRepository,
+            DatabaseManager,
             prefix="db_",
-            instance=db_repo
+            instance=db
         )
 
         # 不绑定实例（不推荐，通常应该提供 instance）
         register_class_methods(
             registry,
-            DatabaseRepository,
+            DatabaseManager,
             prefix="db_"
         )
         ```

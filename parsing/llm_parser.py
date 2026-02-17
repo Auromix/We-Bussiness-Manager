@@ -117,7 +117,7 @@ def create_llm_parser(
             register_instance_methods(
                 function_registry,
                 db_repo,
-                class_name="DatabaseRepository",
+                class_name="DatabaseManager",
                 prefix="db_"
             )
             logger.info("Function calling enabled with database repository")

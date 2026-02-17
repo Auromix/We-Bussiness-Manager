@@ -1,243 +1,487 @@
-"""测试数据库模型。
+"""ORM model behavior tests.
 
-验证所有ORM模型的字段定义、关系、约束等是否正确。
+Tests for:
+- Model field defaults and nullable constraints
+- Relationships between models
+- Unique constraints (ServiceType.name, PluginData composite, etc.)
+- extra_data JSON field usage
+- Model creation with all field types
 """
-import pytest
 from datetime import date, datetime
+
+import pytest
 from sqlalchemy.exc import IntegrityError
 
-from db.models import (
-    Employee, Customer, Membership, ServiceType, ServiceRecord,
-    Product, ReferralChannel, PluginData
+from database.models import (
+    Employee, Customer, Membership, ServiceType, ReferralChannel,
+    ServiceRecord, Product, ProductSale, InventoryLog,
+    RawMessage, Correction, DailySummary, PluginData,
 )
-from tests.conftest import temp_db
 
 
-class TestModels:
-    """数据库模型测试类。"""
-    
-    def test_employee_model(self, temp_db):
-        """测试Employee模型。"""
+class TestEmployeeModel:
+    """Test Employee ORM model."""
+
+    def test_create_employee_with_defaults(self, temp_db):
         with temp_db.get_session() as session:
-            employee = Employee(
-                name="张师傅",
-                wechat_nickname="tony_zhang",
-                role="staff",
-                commission_rate=30.0,
-                extra_data={"department": "剪发部", "skill_level": 5}
-            )
-            session.add(employee)
+            emp = Employee(name="张三")
+            session.add(emp)
             session.commit()
-            session.refresh(employee)
-            
-            assert employee.id > 0
-            assert employee.name == "张师傅"
-            assert employee.wechat_nickname == "tony_zhang"
-            assert employee.role == "staff"
-            assert float(employee.commission_rate) == 30.0
-            assert employee.extra_data == {"department": "剪发部", "skill_level": 5}
-            assert employee.is_active is True
-            assert employee.created_at is not None
-    
-    def test_customer_model(self, temp_db):
-        """测试Customer模型。"""
+
+            assert emp.id is not None
+            assert emp.name == "张三"
+            assert emp.role == "staff"
+            assert emp.is_active is True
+            assert emp.commission_rate == 0
+
+    def test_employee_all_fields(self, temp_db):
         with temp_db.get_session() as session:
-            customer = Customer(
-                name="王女士",
+            emp = Employee(
+                name="Tony",
+                wechat_nickname="tony_wechat",
+                wechat_alias="tony_alias",
+                role="manager",
+                commission_rate=15.5,
+                is_active=True,
+                extra_data={"level": "senior", "department": "haircut"},
+            )
+            session.add(emp)
+            session.commit()
+
+            assert emp.wechat_nickname == "tony_wechat"
+            assert emp.wechat_alias == "tony_alias"
+            assert emp.role == "manager"
+            assert float(emp.commission_rate) == 15.5
+            assert emp.extra_data["level"] == "senior"
+            assert emp.created_at is not None
+
+    def test_employee_extra_data_json(self, temp_db):
+        with temp_db.get_session() as session:
+            emp = Employee(name="ExtraData", extra_data={"skills": ["haircut", "dye"]})
+            session.add(emp)
+            session.commit()
+            assert emp.extra_data["skills"] == ["haircut", "dye"]
+
+
+class TestCustomerModel:
+    """Test Customer ORM model."""
+
+    def test_create_customer_with_defaults(self, temp_db):
+        with temp_db.get_session() as session:
+            cust = Customer(name="Alice")
+            session.add(cust)
+            session.commit()
+
+            assert cust.id is not None
+            assert cust.name == "Alice"
+            assert cust.phone is None
+            assert cust.notes is None
+
+    def test_customer_with_all_fields(self, temp_db):
+        with temp_db.get_session() as session:
+            cust = Customer(
+                name="Bob",
                 phone="13800138000",
-                notes="VIP客户",
-                extra_data={"vip_level": "gold", "source": "美团"}
+                notes="VIP customer",
+                extra_data={"source": "meituan", "vip_level": 3},
             )
-            session.add(customer)
+            session.add(cust)
             session.commit()
-            session.refresh(customer)
-            
-            assert customer.id > 0
-            assert customer.name == "王女士"
-            assert customer.phone == "13800138000"
-            assert customer.notes == "VIP客户"
-            assert customer.extra_data == {"vip_level": "gold", "source": "美团"}
-    
-    def test_membership_model(self, temp_db):
-        """测试Membership模型。"""
+
+            assert cust.phone == "13800138000"
+            assert cust.notes == "VIP customer"
+            assert cust.extra_data["vip_level"] == 3
+
+
+class TestServiceTypeModel:
+    """Test ServiceType ORM model."""
+
+    def test_create_service_type(self, temp_db):
         with temp_db.get_session() as session:
-            # 先创建顾客
-            customer = Customer(name="李先生")
-            session.add(customer)
-            session.flush()
-            
-            membership = Membership(
-                customer_id=customer.id,
-                card_type="年卡",
-                total_amount=3000.0,
-                balance=3000.0,
-                remaining_sessions=365,
-                opened_at=date(2024, 1, 1),
-                expires_at=date(2024, 12, 31),
-                points=0,
-                extra_data={"benefits": ["器械区", "瑜伽室", "游泳池"]}
-            )
-            session.add(membership)
+            st = ServiceType(name="头疗", default_price=30.0, category="therapy")
+            session.add(st)
             session.commit()
-            session.refresh(membership)
-            
-            assert membership.id > 0
-            assert membership.customer_id == customer.id
-            assert membership.card_type == "年卡"
-            assert float(membership.total_amount) == 3000.0
-            assert float(membership.balance) == 3000.0
-            assert membership.remaining_sessions == 365
-            assert membership.expires_at == date(2024, 12, 31)
-            assert membership.points == 0
-            assert membership.extra_data == {"benefits": ["器械区", "瑜伽室", "游泳池"]}
-    
-    def test_referral_channel_model(self, temp_db):
-        """测试ReferralChannel模型。"""
+            assert st.id is not None
+            assert st.name == "头疗"
+
+    def test_service_type_unique_name_constraint(self, temp_db):
+        """ServiceType.name has unique=True constraint."""
         with temp_db.get_session() as session:
-            channel = ReferralChannel(
-                name="美团",
-                channel_type="platform",
-                contact_info="美团商家后台",
-                commission_rate=15.0,
-                commission_type="percentage",
-                extra_data={"platform_id": "MT001"}
-            )
-            session.add(channel)
+            session.add(ServiceType(name="UniqueService"))
             session.commit()
-            session.refresh(channel)
-            
-            assert channel.id > 0
-            assert channel.name == "美团"
-            assert channel.channel_type == "platform"
-            assert channel.contact_info == "美团商家后台"
-            assert float(channel.commission_rate) == 15.0
-            assert channel.commission_type == "percentage"
-            assert channel.extra_data == {"platform_id": "MT001"}
-            assert channel.is_active is True
-    
-    def test_service_record_model(self, temp_db):
-        """测试ServiceRecord模型。"""
+
         with temp_db.get_session() as session:
-            # 创建关联实体
-            customer = Customer(name="王女士")
-            employee = Employee(name="张师傅")
-            service_type = ServiceType(name="剪发", default_price=80.0)
-            channel = ReferralChannel(name="美团", channel_type="platform")
-            session.add_all([customer, employee, service_type, channel])
-            session.flush()
-            
-            record = ServiceRecord(
-                customer_id=customer.id,
-                employee_id=employee.id,
-                service_type_id=service_type.id,
-                service_date=date(2024, 1, 28),
-                amount=80.0,
-                commission_amount=12.0,
-                referral_channel_id=channel.id,
-                net_amount=68.0,
-                extra_data={"duration": 30, "room": "A101"}
-            )
-            session.add(record)
+            session.add(ServiceType(name="UniqueService"))
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+
+class TestProductModel:
+    """Test Product ORM model."""
+
+    def test_create_product_with_defaults(self, temp_db):
+        with temp_db.get_session() as session:
+            product = Product(name="蛋白粉")
+            session.add(product)
             session.commit()
-            session.refresh(record)
-            
-            assert record.id > 0
-            assert record.customer_id == customer.id
-            assert record.employee_id == employee.id
-            assert record.service_type_id == service_type.id
-            assert record.service_date == date(2024, 1, 28)
-            assert float(record.amount) == 80.0
-            assert float(record.commission_amount) == 12.0
-            assert record.referral_channel_id == channel.id
-            assert float(record.net_amount) == 68.0
-            assert record.extra_data == {"duration": 30, "room": "A101"}
-    
-    def test_product_model(self, temp_db):
-        """测试Product模型。"""
+
+            assert product.id is not None
+            assert product.stock_quantity == 0
+            assert product.low_stock_threshold == 10
+
+    def test_product_all_fields(self, temp_db):
         with temp_db.get_session() as session:
             product = Product(
                 name="洗发水",
-                category="accessory",
-                unit_price=50.0,
-                stock_quantity=100,
-                low_stock_threshold=20,
-                extra_data={"supplier": "XX供应商", "batch_number": "B20240101"}
+                category="retail",
+                unit_price=68.0,
+                stock_quantity=50,
+                low_stock_threshold=5,
+                extra_data={"brand": "KERASTASE"},
             )
             session.add(product)
             session.commit()
-            session.refresh(product)
-            
-            assert product.id > 0
-            assert product.name == "洗发水"
-            assert product.category == "accessory"
-            assert float(product.unit_price) == 50.0
-            assert product.stock_quantity == 100
-            assert product.low_stock_threshold == 20
-            assert product.extra_data == {"supplier": "XX供应商", "batch_number": "B20240101"}
-    
-    def test_plugin_data_model(self, temp_db):
-        """测试PluginData模型。"""
+
+            assert product.category == "retail"
+            assert float(product.unit_price) == 68.0
+            assert product.stock_quantity == 50
+
+
+class TestReferralChannelModel:
+    """Test ReferralChannel ORM model."""
+
+    def test_create_channel(self, temp_db):
         with temp_db.get_session() as session:
-            # 创建员工
-            employee = Employee(name="李教练")
-            session.add(employee)
-            session.flush()
-            
-            plugin_data = PluginData(
-                plugin_name="gym",
-                entity_type="employee",
-                entity_id=employee.id,
-                data_key="certifications",
-                data_value=["健身教练资格证", "营养师资格证"]
+            ch = ReferralChannel(
+                name="美团", channel_type="platform",
+                commission_rate=15.0, commission_type="percentage",
             )
-            session.add(plugin_data)
+            session.add(ch)
             session.commit()
-            session.refresh(plugin_data)
-            
-            assert plugin_data.id > 0
-            assert plugin_data.plugin_name == "gym"
-            assert plugin_data.entity_type == "employee"
-            assert plugin_data.entity_id == employee.id
-            assert plugin_data.data_key == "certifications"
-            assert plugin_data.data_value == ["健身教练资格证", "营养师资格证"]
-            
-            # 测试唯一约束
-            plugin_data2 = PluginData(
-                plugin_name="gym",
-                entity_type="employee",
-                entity_id=employee.id,
-                data_key="certifications",
-                data_value=["新证书"]
-            )
-            session.add(plugin_data2)
-            with pytest.raises(IntegrityError):
-                session.commit()
-    
-    def test_relationships(self, temp_db):
-        """测试模型之间的关系。"""
+
+            assert ch.id is not None
+            assert ch.is_active is True
+            assert ch.commission_type == "percentage"
+
+    def test_channel_with_contact(self, temp_db):
         with temp_db.get_session() as session:
-            # 创建关联实体
-            customer = Customer(name="王女士")
-            employee = Employee(name="张师傅")
-            service_type = ServiceType(name="剪发")
-            session.add_all([customer, employee, service_type])
+            ch = ReferralChannel(
+                name="李哥", channel_type="external",
+                contact_info="13900139000",
+                notes="老客户推荐",
+            )
+            session.add(ch)
+            session.commit()
+            assert ch.contact_info == "13900139000"
+
+
+class TestMembershipModel:
+    """Test Membership ORM model."""
+
+    def test_create_membership(self, temp_db):
+        with temp_db.get_session() as session:
+            cust = Customer(name="MemberCust")
+            session.add(cust)
             session.flush()
-            
+
+            m = Membership(
+                customer_id=cust.id,
+                card_type="储值卡",
+                total_amount=1000,
+                balance=1000,
+                opened_at=date(2024, 1, 1),
+            )
+            session.add(m)
+            session.commit()
+
+            assert m.id is not None
+            assert m.is_active is True
+            assert m.points == 0
+            assert m.remaining_sessions is None
+
+    def test_membership_customer_relationship(self, temp_db):
+        with temp_db.get_session() as session:
+            cust = Customer(name="RelCust")
+            session.add(cust)
+            session.flush()
+
+            m = Membership(
+                customer_id=cust.id, card_type="VIP",
+                total_amount=2000, balance=2000,
+                opened_at=date(2024, 1, 1),
+            )
+            session.add(m)
+            session.commit()
+
+            assert m.customer.name == "RelCust"
+            assert len(cust.memberships) == 1
+
+
+class TestServiceRecordModel:
+    """Test ServiceRecord ORM model and its relationships."""
+
+    def test_service_record_relationships(self, temp_db):
+        with temp_db.get_session() as session:
+            customer = Customer(name="Bob")
+            service_type = ServiceType(name="Massage")
+            msg = RawMessage(
+                sender_nickname="bot",
+                content="message",
+                timestamp=datetime(2024, 1, 1, 10, 0, 0),
+            )
+            session.add_all([customer, service_type, msg])
+            session.flush()
+
             record = ServiceRecord(
                 customer_id=customer.id,
-                employee_id=employee.id,
                 service_type_id=service_type.id,
-                service_date=date(2024, 1, 28),
-                amount=80.0
+                service_date=date(2024, 1, 1),
+                amount=100,
+                raw_message_id=msg.id,
             )
             session.add(record)
             session.commit()
-            session.refresh(record)
-            
-            # 测试关系
-            assert record.customer.name == "王女士"
-            assert record.employee.name == "张师傅"
-            assert record.service_type.name == "剪发"
-            assert len(customer.service_records) == 1
-            assert len(employee.service_records_as_employee) == 1
 
+            assert record.customer.name == "Bob"
+            assert record.service_type.name == "Massage"
+            assert record.raw_message.id == msg.id
+            assert record.confirmed is False
+            assert record.commission_amount == 0
+
+    def test_service_record_with_employee_and_recorder(self, temp_db):
+        with temp_db.get_session() as session:
+            emp = Employee(name="Technician")
+            recorder = Employee(name="FrontDesk")
+            cust = Customer(name="Cust1")
+            st = ServiceType(name="Therapy")
+            session.add_all([emp, recorder, cust, st])
+            session.flush()
+
+            record = ServiceRecord(
+                customer_id=cust.id,
+                employee_id=emp.id,
+                recorder_id=recorder.id,
+                service_type_id=st.id,
+                service_date=date(2024, 1, 28),
+                amount=198,
+                commission_amount=20,
+                commission_to="李哥",
+                net_amount=178,
+            )
+            session.add(record)
+            session.commit()
+
+            assert record.employee.name == "Technician"
+            assert record.recorder.name == "FrontDesk"
+
+
+class TestProductSaleModel:
+    """Test ProductSale ORM model."""
+
+    def test_create_product_sale(self, temp_db):
+        with temp_db.get_session() as session:
+            product = Product(name="Shampoo", unit_price=50)
+            customer = Customer(name="SaleCust")
+            session.add_all([product, customer])
+            session.flush()
+
+            sale = ProductSale(
+                product_id=product.id,
+                customer_id=customer.id,
+                quantity=2,
+                unit_price=50,
+                total_amount=100,
+                sale_date=date(2024, 1, 28),
+            )
+            session.add(sale)
+            session.commit()
+
+            assert sale.id is not None
+            assert sale.product.name == "Shampoo"
+            assert sale.customer.name == "SaleCust"
+
+
+class TestInventoryLogModel:
+    """Test InventoryLog ORM model."""
+
+    def test_create_inventory_log(self, temp_db):
+        with temp_db.get_session() as session:
+            product = Product(name="LogProduct")
+            session.add(product)
+            session.flush()
+
+            log = InventoryLog(
+                product_id=product.id,
+                change_type="restock",
+                quantity_change=50,
+                quantity_after=50,
+                notes="Initial stock",
+            )
+            session.add(log)
+            session.commit()
+
+            assert log.id is not None
+            assert log.product.name == "LogProduct"
+            assert log.change_type == "restock"
+
+
+class TestRawMessageModel:
+    """Test RawMessage ORM model."""
+
+    def test_create_raw_message(self, temp_db):
+        with temp_db.get_session() as session:
+            msg = RawMessage(
+                wechat_msg_id="wx-001",
+                sender_nickname="User1",
+                content="Hello",
+                timestamp=datetime(2024, 1, 28, 10, 0, 0),
+            )
+            session.add(msg)
+            session.commit()
+
+            assert msg.id is not None
+            assert msg.parse_status == "pending"
+            assert msg.msg_type == "text"
+            assert msg.is_at_bot is False
+
+    def test_raw_message_unique_wechat_msg_id(self, temp_db):
+        """wechat_msg_id should be unique."""
+        with temp_db.get_session() as session:
+            msg1 = RawMessage(
+                wechat_msg_id="wx-dup",
+                sender_nickname="U1",
+                content="C1",
+                timestamp=datetime(2024, 1, 1),
+            )
+            session.add(msg1)
+            session.commit()
+
+        with temp_db.get_session() as session:
+            msg2 = RawMessage(
+                wechat_msg_id="wx-dup",
+                sender_nickname="U2",
+                content="C2",
+                timestamp=datetime(2024, 1, 2),
+            )
+            session.add(msg2)
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+
+class TestCorrectionModel:
+    """Test Correction ORM model."""
+
+    def test_create_correction(self, temp_db):
+        with temp_db.get_session() as session:
+            msg = RawMessage(
+                sender_nickname="admin",
+                content="correction",
+                timestamp=datetime(2024, 1, 28),
+            )
+            session.add(msg)
+            session.flush()
+
+            correction = Correction(
+                original_record_type="service_records",
+                original_record_id=1,
+                correction_type="amount_change",
+                old_value={"amount": 100},
+                new_value={"amount": 120},
+                reason="错误金额",
+                raw_message_id=msg.id,
+            )
+            session.add(correction)
+            session.commit()
+
+            assert correction.id is not None
+            assert correction.raw_message.sender_nickname == "admin"
+
+
+class TestDailySummaryModel:
+    """Test DailySummary ORM model."""
+
+    def test_create_daily_summary(self, temp_db):
+        with temp_db.get_session() as session:
+            summary = DailySummary(
+                summary_date=date(2024, 1, 28),
+                total_service_revenue=1000,
+                service_count=5,
+                summary_text="Good day",
+            )
+            session.add(summary)
+            session.commit()
+
+            assert summary.id is not None
+            assert summary.confirmed is False
+
+    def test_daily_summary_unique_date(self, temp_db):
+        """summary_date should be unique."""
+        with temp_db.get_session() as session:
+            session.add(DailySummary(
+                summary_date=date(2024, 1, 28),
+                total_service_revenue=500,
+            ))
+            session.commit()
+
+        with temp_db.get_session() as session:
+            session.add(DailySummary(
+                summary_date=date(2024, 1, 28),
+                total_service_revenue=600,
+            ))
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+
+class TestPluginDataModel:
+    """Test PluginData ORM model."""
+
+    def test_create_plugin_data(self, temp_db):
+        with temp_db.get_session() as session:
+            pd = PluginData(
+                plugin_name="gym",
+                entity_type="customer",
+                entity_id=1,
+                data_key="body_fat",
+                data_value=18.5,
+            )
+            session.add(pd)
+            session.commit()
+
+            assert pd.id is not None
+            assert pd.data_value == 18.5
+
+    def test_plugin_data_unique_constraint(self, temp_db):
+        """Composite unique constraint on (plugin_name, entity_type, entity_id, data_key)."""
+        with temp_db.get_session() as session:
+            pd1 = PluginData(
+                plugin_name="gym",
+                entity_type="customer",
+                entity_id=1,
+                data_key="body_fat",
+                data_value=18.5,
+            )
+            pd2 = PluginData(
+                plugin_name="gym",
+                entity_type="customer",
+                entity_id=1,
+                data_key="body_fat",
+                data_value=19.0,
+            )
+            session.add(pd1)
+            session.commit()
+            session.add(pd2)
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+    def test_plugin_data_different_keys_ok(self, temp_db):
+        """Different data_key values should NOT conflict."""
+        with temp_db.get_session() as session:
+            session.add(PluginData(
+                plugin_name="gym", entity_type="customer",
+                entity_id=1, data_key="body_fat", data_value=18.5,
+            ))
+            session.add(PluginData(
+                plugin_name="gym", entity_type="customer",
+                entity_id=1, data_key="weight", data_value=75,
+            ))
+            session.commit()  # Should not raise

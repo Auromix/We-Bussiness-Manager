@@ -7,7 +7,7 @@
 from typing import Dict, Any, Optional, List
 from datetime import date
 from core.business_adapter import BusinessLogicAdapter
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 from services.summary_svc import SummaryService
 from services.inventory_svc import InventoryService
 from services.membership_svc import MembershipService
@@ -17,7 +17,7 @@ from loguru import logger
 class TherapyStoreAdapter(BusinessLogicAdapter):
     """健康理疗门店业务逻辑适配器"""
     
-    def __init__(self, db_repo: DatabaseRepository):
+    def __init__(self, db_repo: DatabaseManager):
         self.db = db_repo
         self.summary_svc = SummaryService(db_repo)
         self.inventory_svc = InventoryService(db_repo)
@@ -43,7 +43,7 @@ class TherapyStoreAdapter(BusinessLogicAdapter):
     
     def get_records_by_date(self, target_date: date, record_types: Optional[List[str]] = None) -> List[Dict]:
         """按日期查询记录"""
-        records = self.db.get_records_by_date(target_date)
+        records = self.db.get_daily_records(target_date)
         
         if record_types:
             # 过滤指定类型

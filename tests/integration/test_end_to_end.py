@@ -3,7 +3,7 @@ import pytest
 from datetime import datetime, date
 from parsing.preprocessor import MessagePreProcessor
 from parsing.pipeline import MessagePipeline
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 from business.therapy_store_adapter import TherapyStoreAdapter
 
 
@@ -66,7 +66,7 @@ class TestEndToEnd:
         assert result.records[0]['confidence'] == 0.95
         
         # 6. 验证数据库
-        records = temp_db.get_records_by_date(date(2024, 1, 28))
+        records = temp_db.get_daily_records(date(2024, 1, 28))
         assert len(records) == 1
         assert records[0]['customer_name'] == '段老师'
         assert records[0]['service_type'] == '头疗'
@@ -137,7 +137,7 @@ class TestEndToEnd:
         assert len(result.records) == 2
         
         # 验证数据库
-        records = temp_db.get_records_by_date(date(2024, 2, 3))
+        records = temp_db.get_daily_records(date(2024, 2, 3))
         assert len(records) == 2
         assert any(r['customer_name'] == '段老师' for r in records)
         assert any(r['customer_name'] == '姚老师' for r in records)

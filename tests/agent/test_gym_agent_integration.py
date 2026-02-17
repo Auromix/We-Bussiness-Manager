@@ -18,8 +18,8 @@ sys.path.insert(0, str(project_root))
 
 from agent import Agent, create_provider
 from agent.functions.registry import FunctionRegistry
-from db.repository import DatabaseRepository
-from db.models import ServiceRecord, Membership, ProductSale
+from database import DatabaseManager
+from database.models import ServiceRecord, Membership, ProductSale
 
 # 导入业务函数
 sys.path.insert(0, str(project_root / "examples"))
@@ -49,7 +49,7 @@ def test_database():
     
     db_url = f"sqlite:///{db_path}"
     
-    repo = DatabaseRepository(database_url=db_url)
+    repo = DatabaseManager(database_url=db_url)
     repo.create_tables()
     
     # 设置全局仓库
@@ -353,7 +353,7 @@ async def main():
         db_path.unlink()
     
     db_url = f"sqlite:///{db_path}"
-    repo = DatabaseRepository(database_url=db_url)
+    repo = DatabaseManager(database_url=db_url)
     repo.create_tables()
     gym_agent_manager.repo = repo
     gym_agent_manager._init_base_data()

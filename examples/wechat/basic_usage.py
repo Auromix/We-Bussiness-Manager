@@ -10,7 +10,7 @@ from interface.wechat.bot import WeChatBot
 from interface.wechat.message_router import WeChatMessageRouter
 from business.command_handler import BusinessCommandHandler
 from parsing.pipeline import MessagePipeline
-from db.repository import Repository
+from database import DatabaseManager
 
 
 async def main():
@@ -20,7 +20,7 @@ async def main():
     logger.info("初始化组件...")
     
     # 初始化数据库
-    repo = Repository(settings.database_url)
+    repo = DatabaseManager(settings.database_url)
     
     # 初始化消息处理流水线
     pipeline = MessagePipeline(repo)

@@ -6,7 +6,7 @@ import re
 from datetime import date
 from typing import List, Dict, Any
 from core.business_adapter import BusinessLogicAdapter
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 from business.commands import COMMANDS, get_help_text
 
 
@@ -16,7 +16,7 @@ class BusinessCommandHandler:
     处理所有业务相关的命令逻辑，不依赖具体的接口实现
     """
     
-    def __init__(self, business_adapter: BusinessLogicAdapter, db_repo: DatabaseRepository):
+    def __init__(self, business_adapter: BusinessLogicAdapter, db_repo: DatabaseManager):
         self.business_adapter = business_adapter
         self.db = db_repo
     

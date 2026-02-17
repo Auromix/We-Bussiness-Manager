@@ -3,7 +3,7 @@ import pytest
 from datetime import date
 from interface.command_handler import CommandHandler
 from business.command_handler import BusinessCommandHandler
-from db.repository import DatabaseRepository
+from database import DatabaseManager
 
 
 class TestCommandHandler:

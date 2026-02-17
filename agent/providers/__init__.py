@@ -3,6 +3,7 @@
 本模块提供了统一的 LLM 提供商接口和工厂函数，支持多种大语言模型：
 - OpenAI（GPT 系列）
 - Anthropic（Claude 系列）
+- MiniMax（M2.5、M2.1 等系列）
 - 开源模型（兼容 OpenAI API 格式）
 
 所有提供商都实现 LLMProvider 接口，可以无缝切换使用。
@@ -13,12 +14,14 @@ from typing import Any
 from agent.providers.base import LLMProvider
 from agent.providers.openai_provider import OpenAIProvider
 from agent.providers.claude_provider import ClaudeProvider
+from agent.providers.minimax_provider import MiniMaxProvider
 from agent.providers.open_source_provider import OpenSourceProvider
 
 __all__ = [
     "LLMProvider",
     "OpenAIProvider",
     "ClaudeProvider",
+    "MiniMaxProvider",
     "OpenSourceProvider",
     "create_provider",
 ]
@@ -30,17 +33,22 @@ def create_provider(provider_type: str, **kwargs: Any) -> LLMProvider:
     根据提供商类型创建对应的 LLMProvider 实例。支持的提供商类型包括：
     - "openai" 或 "OpenAI": OpenAI GPT 系列模型
     - "claude" 或 "anthropic": Anthropic Claude 系列模型
+    - "minimax": MiniMax M2.5/M2.1 系列模型
     - "open_source" 或 "custom": 兼容 OpenAI API 格式的开源模型
 
     Args:
         provider_type: 提供商类型字符串，不区分大小写。支持的值：
             - "openai": OpenAI 提供商
             - "claude" 或 "anthropic": Claude 提供商
+            - "minimax": MiniMax 提供商
             - "open_source" 或 "custom": 开源模型提供商
         **kwargs: 提供商特定的初始化参数：
             - OpenAI: api_key (str), model (str, 默认 "gpt-4o-mini"),
               base_url (Optional[str])
-            - Claude: api_key (str), model (str, 默认 "claude-sonnet-4-20250514")
+            - Claude: api_key (str), model (str, 默认 "claude-sonnet-4-20250514"),
+              base_url (Optional[str])
+            - MiniMax: api_key (str), model (str, 默认 "MiniMax-M2.5"),
+              base_url (Optional[str], 默认 "https://api.minimaxi.com/anthropic")
             - OpenSource: base_url (str), model (str), api_key (Optional[str]),
               timeout (float, 默认 60.0)
 
@@ -58,6 +66,9 @@ def create_provider(provider_type: str, **kwargs: Any) -> LLMProvider:
         # 创建 Claude 提供商
         provider = create_provider("claude", api_key="sk-ant-...", model="claude-3")
 
+        # 创建 MiniMax 提供商
+        provider = create_provider("minimax", api_key="sk-api-...", model="MiniMax-M2.5")
+
         # 创建开源模型提供商
         provider = create_provider(
             "open_source",
@@ -72,6 +83,8 @@ def create_provider(provider_type: str, **kwargs: Any) -> LLMProvider:
         return OpenAIProvider(**kwargs)
     elif provider_type == "claude" or provider_type == "anthropic":
         return ClaudeProvider(**kwargs)
+    elif provider_type == "minimax":
+        return MiniMaxProvider(**kwargs)
     elif provider_type == "open_source" or provider_type == "custom":
         return OpenSourceProvider(**kwargs)
     else:

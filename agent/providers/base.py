@@ -71,6 +71,9 @@ class LLMResponse:
             此字段包含 FunctionCall 对象列表；否则为 None。
         finish_reason: 可选的完成原因，表示 LLM 为什么停止生成。
             常见值包括 "stop"（正常结束）、"length"（达到最大长度）等。
+        metadata: 可选的元数据字典，用于存储额外信息。
+            例如：thinking 内容（MiniMax Interleaved Thinking）、
+            token 使用统计等。
 
     Example:
         ```python
@@ -88,11 +91,18 @@ class LLMResponse:
             ],
             finish_reason="tool_calls"
         )
+        
+        # 包含 thinking 的回复（MiniMax）
+        response = LLMResponse(
+            content="北京今天天气晴朗",
+            metadata={"thinking": "用户询问天气，需要调用 get_weather 函数"}
+        )
         ```
     """
     content: str
     function_calls: Optional[List[FunctionCall]] = None
     finish_reason: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class LLMProvider(ABC):

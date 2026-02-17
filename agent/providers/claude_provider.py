@@ -32,7 +32,8 @@ class ClaudeProvider(LLMProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-sonnet-4-20250514"
+        model: str = "claude-sonnet-4-20250514",
+        base_url: Optional[str] = None
     ) -> None:
         """初始化 Claude 提供商。
 
@@ -43,11 +44,15 @@ class ClaudeProvider(LLMProvider):
                 - "claude-opus-3-20240229": Claude Opus 3
                 - "claude-3-5-sonnet-20241022": Claude 3.5 Sonnet
                 默认值为 "claude-sonnet-4-20250514"。
+            base_url: 自定义 API 基础 URL（可选）。用于兼容的 API 服务。
 
         Raises:
             ValueError: 如果 api_key 为空或无效。
         """
-        self.client = Anthropic(api_key=api_key)
+        if base_url:
+            self.client = Anthropic(api_key=api_key, base_url=base_url)
+        else:
+            self.client = Anthropic(api_key=api_key)
         self._model = model
     
     @property
@@ -92,6 +97,7 @@ class ClaudeProvider(LLMProvider):
 
         Returns:
             LLMResponse 对象，包含回复内容和可能的函数调用。
+            对于 MiniMax 模型，额外包含 thinking 字段（Interleaved Thinking）。
 
         Raises:
             Exception: 如果 Claude API 调用失败。可能是网络错误、API 密钥
@@ -100,8 +106,9 @@ class ClaudeProvider(LLMProvider):
         Note:
             - Claude API 要求 system 消息单独传递，不能放在 messages 中。
             - Claude 使用 "tools" 参数，格式与 OpenAI 略有不同。
-            - Claude 返回的 content 是列表，包含 text 和 tool_use 块。
+            - Claude 返回的 content 是列表，包含 text、thinking 和 tool_use 块。
             - tool_use 块中的 input 已经是字典，不需要 JSON 解析。
+            - MiniMax 模型支持 thinking 块（交错思维链），展示模型的推理过程。
         """
         try:
             # Claude API 要求 system 消息单独提取，不能放在 messages 中
@@ -113,10 +120,11 @@ class ClaudeProvider(LLMProvider):
             )
             
             # 提取非 system 消息
-            claude_messages: List[Dict[str, str]] = []
+            claude_messages: List[Dict[str, Any]] = []
             for msg in messages:
                 if msg.role == "system":
                     continue
+                # 保持消息的完整结构（支持列表形式的 content）
                 claude_messages.append({
                     "role": msg.role,
                     "content": msg.content
@@ -137,20 +145,36 @@ class ClaudeProvider(LLMProvider):
             
             # 如果提供了函数定义，转换为 Claude 的 tools 格式
             if functions:
-                # Claude 直接使用 tools 参数，格式与 OpenAI 略有不同
-                request_params["tools"] = functions
+                # Claude 使用 tools 参数，需要将 parameters 转换为 input_schema
+                claude_tools = []
+                for func in functions:
+                    tool = {
+                        "name": func.get("name"),
+                        "description": func.get("description")
+                    }
+                    # Claude 使用 input_schema 而不是 parameters
+                    if "parameters" in func:
+                        tool["input_schema"] = func["parameters"]
+                    elif "input_schema" in func:
+                        tool["input_schema"] = func["input_schema"]
+                    claude_tools.append(tool)
+                request_params["tools"] = claude_tools
             
             # 发送请求到 Claude API
             response = self.client.messages.create(**request_params)
             
             # 解析响应：Claude 返回的 content 是列表，包含不同类型的块
             content_text: str = ""
+            thinking_text: str = ""  # MiniMax 特有的 thinking 内容
             function_calls: Optional[List[FunctionCall]] = None
             
             for content_block in response.content:
                 if content_block.type == "text":
                     # 文本块，累积到 content_text
                     content_text += content_block.text
+                elif content_block.type == "thinking":
+                    # MiniMax 特有：思考块（Interleaved Thinking）
+                    thinking_text += content_block.thinking
                 elif content_block.type == "tool_use":
                     # 工具使用块，转换为 FunctionCall
                     if function_calls is None:
@@ -161,11 +185,20 @@ class ClaudeProvider(LLMProvider):
                         arguments=content_block.input
                     ))
             
-            return LLMResponse(
+            # 创建响应对象
+            llm_response = LLMResponse(
                 content=content_text,
                 function_calls=function_calls,
                 finish_reason=response.stop_reason
             )
+            
+            # 如果有 thinking 内容，添加到元数据中
+            if thinking_text:
+                llm_response.metadata = llm_response.metadata or {}
+                llm_response.metadata["thinking"] = thinking_text
+                logger.debug(f"Captured thinking content: {thinking_text[:100]}...")
+            
+            return llm_response
             
         except Exception as e:
             logger.error(f"Claude API error: {e}")

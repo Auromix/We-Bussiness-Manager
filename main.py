@@ -8,12 +8,13 @@ from db.repository import DatabaseRepository
 from parsing.preprocessor import MessagePreProcessor
 from parsing.llm_parser import create_llm_parser
 from parsing.pipeline import MessagePipeline
-from core.message_router import MessageRouter
-from core.command_handler import CommandHandler
-from core.bot import WeChatBot, MockWeChatBot
+from interface import InterfaceManager
+from interface.wechat import WeChatBot, WeChatMessageRouter
 from core.scheduler import Scheduler
 from core.business_adapter import BusinessLogicAdapter
 from business.therapy_store_adapter import TherapyStoreAdapter
+from business.command_handler import BusinessCommandHandler
+from business.scheduler_tasks import SchedulerTasks
 
 
 def setup_logging():
@@ -74,51 +75,99 @@ def main():
     # 初始化消息流水线（通过适配器解耦业务逻辑）
     pipeline = MessagePipeline(preprocessor, llm_parser, db_repo, business_adapter)
     
-    # 初始化命令处理器（通过适配器解耦业务逻辑）
-    command_handler = CommandHandler(db_repo, business_adapter)
+    # 初始化业务命令处理器（业务逻辑层）
+    business_command_handler = BusinessCommandHandler(business_adapter, db_repo)
     
-    # 初始化消息路由
-    router = MessageRouter(pipeline, command_handler, settings.bot_name)
+    # 初始化微信消息路由
+    router = WeChatMessageRouter(pipeline, business_command_handler)
     
-    # 初始化微信机器人
+    # 初始化接口管理器
+    interface_manager = InterfaceManager()
+    
+    # 初始化企业微信机器人
+    bot = WeChatBot(router)
+    interface_manager.register(bot)
+    
+    # 初始化 Web API 接口（可选，用于数据库管理）
+    enable_web_api = os.getenv("ENABLE_WEB_API", "false").lower() == "true"
+    if enable_web_api:
+        try:
+            from interface.web import WebAPI
+            logger.info("Initializing Web API interface...")
+            web_api = WebAPI(
+                db_repo=db_repo,
+                host=os.getenv("WEB_API_HOST", "0.0.0.0"),
+                port=int(os.getenv("WEB_API_PORT", "8080"))
+            )
+            interface_manager.register(web_api)
+            logger.info("Web API interface registered (will start with other interfaces)")
+        except ImportError:
+            logger.warning("Web API not available (missing dependencies)")
+    
+    # 启动所有已注册的接口
+    logger.info("Starting all interfaces...")
+    interface_manager.start_all()
+    
+    # 初始化定时任务（业务逻辑层）
+    def send_summary_message(target: str, content: str):
+        """定时任务的消息发送回调"""
+        # 通过接口管理器获取 wechat 接口并发送消息
+        wechat_interface = interface_manager.get_interface("wechat")
+        if wechat_interface:
+            wechat_interface.send_message(target, content)
+        else:
+            logger.warning("WeChat interface not available for sending summary message")
+    
+    # 创建定时任务业务逻辑实例
+    scheduler_tasks = SchedulerTasks(
+        business_adapter=business_adapter,
+        db_repo=db_repo,
+        message_sender=send_summary_message if bot.running else None
+    )
+    
+    # 初始化调度器（通用框架）
+    scheduler = Scheduler()
+    
+    # 添加每日汇总任务
     try:
-        bot = WeChatBot(router)
-        bot.start()
-    except Exception as e:
-        logger.warning(f"Failed to start WeChat bot: {e}, using mock mode")
-        bot = MockWeChatBot(router)
-        bot.start()
+        hour, minute = map(int, settings.daily_summary_time.split(':'))
+    except:
+        hour, minute = 21, 0
     
-    # 初始化定时任务（通过适配器解耦业务逻辑）
-    scheduler = Scheduler(business_adapter, db_repo, bot)
+    # 准备目标群组列表
+    target_groups = None
+    wechat_interface = interface_manager.get_interface("wechat")
+    if wechat_interface and wechat_interface.is_running() and settings.wechat_group_ids:
+        target_groups = [g.strip() for g in settings.wechat_group_ids.split(',')]
+    
+    # 创建任务函数
+    async def daily_summary_job():
+        await scheduler_tasks.daily_summary_task(target_groups)
+    
+    scheduler.add_daily_task(
+        task_func=daily_summary_job,
+        hour=hour,
+        minute=minute,
+        task_id='daily_summary',
+        task_name='每日汇总'
+    )
+    
     scheduler.start()
     
-    logger.info("Bot is running! Press Ctrl+C to stop.")
+    logger.info("All interfaces are running! Press Ctrl+C to stop.")
+    logger.info(f"Active interfaces: {', '.join(interface_manager.get_running_interfaces())}")
     
     # 保持运行
     try:
-        # 如果是模拟模式，可以提供一个简单的消息接收接口
-        if isinstance(bot, MockWeChatBot):
-            logger.info("Mock mode: Use API to send messages")
-            # 运行事件循环以支持 scheduler
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                loop.run_forever()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_forever()
-        else:
-            # 真实模式，等待消息循环
-            import time
-            while bot.running:
-                time.sleep(1)
+        import time
+        # 检查是否有接口在运行
+        while any(interface.is_running() for interface in interface_manager.interfaces.values()):
+            time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
         scheduler.stop()
-        bot.stop()
-        logger.info("Bot stopped.")
+        interface_manager.stop_all()
+        logger.info("All interfaces stopped.")
 
 
 if __name__ == "__main__":

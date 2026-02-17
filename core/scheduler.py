@@ -1,25 +1,24 @@
-"""定时任务调度器"""
+"""定时任务调度器 - 通用的任务调度框架
+
+具体的业务任务逻辑在 business/scheduler_tasks.py 中
+"""
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import date, datetime
+from typing import Callable, Optional, List
 from loguru import logger
-from db.repository import DatabaseRepository
 from config.settings import settings
-from core.bot import WeChatBot
-from core.business_adapter import BusinessLogicAdapter
 import asyncio
 
 
 class Scheduler:
     """定时任务调度器
     
-    通过 BusinessLogicAdapter 解耦业务逻辑
+    通用的任务调度框架，不包含具体的业务逻辑
+    业务逻辑通过回调函数注入，保持 core 层的独立性
     """
     
-    def __init__(self, business_adapter: BusinessLogicAdapter, db_repo: DatabaseRepository, bot: WeChatBot = None):
-        self.business_adapter = business_adapter
-        self.db = db_repo
-        self.bot = bot
+    def __init__(self):
+        """初始化调度器"""
         # 使用默认事件循环或创建新的事件循环
         try:
             loop = asyncio.get_event_loop()
@@ -31,53 +30,51 @@ class Scheduler:
             asyncio.set_event_loop(loop)
         self.scheduler = AsyncIOScheduler(event_loop=loop)
     
-    def start(self):
-        """启动调度器"""
-        # 解析每日汇总时间
-        try:
-            hour, minute = map(int, settings.daily_summary_time.split(':'))
-        except:
-            hour, minute = 21, 0
+    def add_daily_task(
+        self,
+        task_func: Callable,
+        hour: int = 21,
+        minute: int = 0,
+        task_id: str = 'daily_task',
+        task_name: str = '每日任务'
+    ):
+        """添加每日定时任务
         
-        # 添加每日汇总任务
+        Args:
+            task_func: 任务函数（async 函数）
+            hour: 小时 (0-23)
+            minute: 分钟 (0-59)
+            task_id: 任务ID
+            task_name: 任务名称
+        """
         self.scheduler.add_job(
-            self._daily_summary_job,
+            task_func,
             trigger=CronTrigger(hour=hour, minute=minute),
-            id='daily_summary',
-            name='每日汇总',
+            id=task_id,
+            name=task_name,
             replace_existing=True
         )
-        
-        self.scheduler.start()
-        logger.info(f"Scheduler started, daily summary at {hour:02d}:{minute:02d}")
+        logger.info(f"Added daily task '{task_name}' at {hour:02d}:{minute:02d}")
     
-    async def _daily_summary_job(self):
-        """每日汇总任务"""
-        try:
-            logger.info("Running daily summary job")
-            today = date.today()
-            summary_text = self.business_adapter.generate_summary('daily', date=today)
-            
-            # 保存汇总到数据库
-            summary_data = {
-                'summary_text': summary_text,
-                'confirmed': False
-            }
-            self.db.save_daily_summary(today, summary_data)
-            
-            # 发送到微信群（如果有bot实例）
-            if self.bot and self.bot.target_group_ids:
-                for group_id in self.bot.target_group_ids:
-                    self.bot.send_message(group_id, summary_text)
-                    logger.info(f"Daily summary sent to group {group_id}")
-            else:
-                logger.info("No bot or group configured, summary saved only")
-                
-        except Exception as e:
-            logger.error(f"Daily summary job failed: {e}")
+    def start(self):
+        """启动调度器"""
+        self.scheduler.start()
+        logger.info("Scheduler started")
     
     def stop(self):
         """停止调度器"""
         self.scheduler.shutdown()
         logger.info("Scheduler stopped")
+    
+    def remove_job(self, job_id: str):
+        """移除任务
+        
+        Args:
+            job_id: 任务ID
+        """
+        try:
+            self.scheduler.remove_job(job_id)
+            logger.info(f"Job {job_id} removed")
+        except Exception as e:
+            logger.warning(f"Failed to remove job {job_id}: {e}")
 

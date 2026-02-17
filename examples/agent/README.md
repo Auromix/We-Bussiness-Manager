@@ -1,182 +1,132 @@
 # Agent 模块使用示例
 
-本目录包含 Agent 模块的各种使用示例，展示如何使用 Agent 进行对话和函数调用。
+本目录提供了 `agent/` 模块的完整使用示例，帮助您快速上手并独立使用 Agent 功能。
 
-## 示例列表
+## 📚 目录结构
 
-### 1. 基础使用示例 (`basic_example.py`)
-
-展示 Agent 的基础功能，包括：
-
-- **创建不同的 LLM 提供商**
-  - OpenAI（GPT 系列）
-  - Claude（Anthropic 系列）
-  - 开源模型（兼容 OpenAI API 格式）
-
-- **创建 Agent 实例**
-  - 设置系统提示词
-  - 配置对话上下文
-
-- **进行对话**
-  - 单轮对话
-  - 多轮对话（利用上下文）
-
-- **管理对话历史**
-  - 查看对话历史
-  - 清空对话历史
-
-### 2. 函数调用示例 (`function_calling_example.py`)
-
-展示如何使用 Agent 进行函数调用，包括：
-
-- **使用装饰器标记函数**
-  ```python
-  @agent_callable(description="获取天气信息")
-  def get_weather(city: str) -> dict:
-      ...
-  ```
-
-- **手动注册函数**
-  ```python
-  registry.register(name="my_function", description="...", func=my_function)
-  ```
-
-- **自动注册实例方法**
-  ```python
-  register_instance_methods(registry, db_repo, prefix="db_")
-  ```
-
-- **自动注册多个对象**
-  ```python
-  auto_discover_and_register(registry, [
-      (calculator, "calc_"),
-      (db_service, "db_"),
-  ])
-  ```
-
-- **多步骤函数调用**
-  - Agent 自动处理函数调用链
-  - 支持多轮迭代
-
-
-## 运行示例
-
-### 前置要求
-
-1. **安装项目依赖**：
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **设置环境变量**（根据需要选择）：
-   ```bash
-   # OpenAI
-   export OPENAI_API_KEY="sk-..."
-
-   # Claude
-   export ANTHROPIC_API_KEY="sk-ant-..."
-
-   # 开源模型（可选）
-   export OPEN_SOURCE_BASE_URL="http://localhost:8000/v1"
-   export OPEN_SOURCE_MODEL="qwen"
-   export OPEN_SOURCE_API_KEY="optional-key"
-   ```
-
-### 运行基础示例
-
-```bash
-# 从项目根目录运行
-python examples/agent/basic_example.py
+```
+examples/agent/
+├── README.md                    # 本文档
+├── QUICKSTART.md                # 快速开始指南
+├── basic_usage.py               # 基础使用示例
+├── provider_example.py          # 不同 Provider 使用示例
+├── function_calling_example.py  # 函数调用示例
+└── advanced_example.py          # 高级用法示例
 ```
 
-### 运行函数调用示例
+## 🚀 快速开始
 
-```bash
-python examples/agent/function_calling_example.py
-```
+如果您是第一次使用，建议按以下顺序学习：
 
-## 示例输出
+1. **快速开始** → 阅读 `QUICKSTART.md`，5 分钟了解基本用法
+2. **基础示例** → 运行 `basic_usage.py`，了解初始化和基本对话
+3. **Provider 示例** → 运行 `provider_example.py`，了解不同 LLM 提供商的使用
+4. **函数调用** → 运行 `function_calling_example.py`，学习如何注册和使用函数
+5. **高级用法** → 运行 `advanced_example.py`，了解高级特性
 
-运行示例后，你将看到：
+## 📖 示例说明
 
-1. **详细的日志输出**
-   - 每个步骤的执行情况
-   - 函数调用信息
-   - 错误提示（如果有）
+### 1. 基础使用 (`basic_usage.py`)
 
-2. **对话示例**
-   - 用户问题和 Agent 回答
-   - 函数调用结果
-   - 迭代次数统计
+展示最基本的操作：
+- 创建 LLM Provider（OpenAI、Claude、MiniMax 等）
+- 创建 Agent 实例
+- 进行单轮和多轮对话
+- 管理对话历史
 
-3. **函数注册信息**
-   - 已注册的函数列表
-   - 函数描述和参数
+**适用场景**：第一次使用，需要了解基本操作流程
 
-## 代码结构说明
+### 2. Provider 示例 (`provider_example.py`)
 
-### 基础示例 (`basic_example.py`)
+展示不同 LLM 提供商的使用：
+- **OpenAI Provider**：GPT 系列模型
+- **Claude Provider**：Anthropic Claude 系列
+- **MiniMax Provider**：MiniMax 系列（国内可用）
+- **OpenSource Provider**：兼容 OpenAI API 的开源模型
 
-主要函数：
-- `example_openai()`: 使用 OpenAI Provider
-- `example_claude()`: 使用 Claude Provider
-- `example_open_source()`: 使用开源模型 Provider
-- `example_conversation_history()`: 管理对话历史
+**适用场景**：需要了解如何切换不同的 LLM 提供商
 
-### 函数调用示例 (`function_calling_example.py`)
+### 3. 函数调用示例 (`function_calling_example.py`)
 
-主要函数：
-- `example_decorator_functions()`: 使用装饰器标记的函数
-- `example_manual_registration()`: 手动注册函数
-- `example_instance_methods()`: 自动注册实例方法
-- `example_auto_discover()`: 自动发现并注册
-- `example_multi_step_function_calling()`: 多步骤函数调用
+展示函数调用的完整流程：
+- **装饰器方式**：使用 `@agent_callable` 标记函数
+- **手动注册**：直接注册函数到注册表
+- **自动注册**：批量注册实例方法、类方法
+- **多步骤调用**：Agent 自动处理函数调用链
 
-示例类：
-- `Calculator`: 计算器类
-- `DatabaseService`: 数据库服务类
+**适用场景**：需要让 Agent 调用外部函数或服务
 
-## 关键概念
+### 4. 高级用法示例 (`advanced_example.py`)
 
-### 1. LLM Provider
+展示高级特性：
+- 消息解析（从非结构化文本提取结构化数据）
+- 自定义系统提示词
+- 控制迭代次数
+- 错误处理
+- 与数据库模块集成
 
-所有 LLM 提供商都实现 `LLMProvider` 接口，提供统一的调用方式：
+**适用场景**：需要深入了解 Agent 的高级功能
+
+## 💡 核心概念
+
+### Agent - 统一对话接口
+
+`Agent` 是 Agent 模块的统一入口，提供简洁的对话接口：
 
 ```python
-from agent import create_provider
+from agent import Agent, create_provider
 
 # 创建 Provider
 provider = create_provider("openai", api_key="sk-...", model="gpt-4o-mini")
+
+# 创建 Agent
+agent = Agent(provider, system_prompt="你是一个友好的助手")
+
+# 进行对话
+response = await agent.chat("你好")
+print(response["content"])
 ```
 
-支持的 Provider：
-- `openai`: OpenAI GPT 系列
-- `claude`: Anthropic Claude 系列
-- `open_source`: 兼容 OpenAI API 的开源模型
+### Provider - 多模型透明切换
 
-### 2. Function Registry
+Agent 通过 `LLMProvider` 抽象接口支持多种模型，切换模型只需更换 Provider：
 
-函数注册表管理所有可被 Agent 调用的函数：
+```python
+# OpenAI
+provider = create_provider("openai", api_key="sk-...", model="gpt-4o-mini")
+
+# Claude
+provider = create_provider("claude", api_key="sk-ant-...")
+
+# MiniMax（国内可用）
+provider = create_provider("minimax", api_key="sk-api-...", model="MiniMax-M2.5")
+
+# 开源模型（兼容 OpenAI API）
+provider = create_provider("open_source", base_url="http://localhost:8000/v1", model="qwen")
+```
+
+### FunctionRegistry - 函数注册表
+
+管理所有可被 Agent 调用的函数：
 
 ```python
 from agent import FunctionRegistry
+from agent.functions.discovery import agent_callable, auto_discover_and_register
 
+# 方式1：使用装饰器
+@agent_callable(description="获取天气信息")
+def get_weather(city: str) -> dict:
+    return {"city": city, "temp": 25}
+
+# 方式2：手动注册
 registry = FunctionRegistry()
-registry.register(name="my_func", description="...", func=my_func)
+registry.register("get_weather", "获取天气信息", get_weather)
+
+# 方式3：自动发现并注册
+auto_discover_and_register(registry, [get_weather])
 ```
 
-### 3. Agent
-
-Agent 整合 LLM 和函数调用，提供统一的对话接口：
-
-```python
-from agent import Agent
-
-agent = Agent(provider, registry, system_prompt="你是一个助手")
-response = await agent.chat("查询用户信息")
-```
-
-### 4. 函数调用流程
+### 函数调用流程
 
 ```
 用户消息 → Agent.chat() → LLM Provider
@@ -192,130 +142,212 @@ response = await agent.chat("查询用户信息")
               继续迭代（最多 max_iterations 次）
 ```
 
-## 最佳实践
+## 🔧 运行示例
 
-### 1. 函数命名
+### 前置条件
 
-- 使用清晰、描述性的函数名
-- 使用前缀避免命名冲突（如 `db_`, `calc_`）
-- 保持函数名与功能一致
-
-### 2. 函数描述
-
-- 提供详细的函数描述，帮助 LLM 理解函数用途
-- 描述应该包括参数说明和返回值说明
-- 使用中文描述（如果 Agent 使用中文）
-
-### 3. 错误处理
-
-- 函数应该处理可能的错误情况
-- 返回有意义的错误信息
-- Agent 会将错误信息传递给 LLM
-
-### 4. Provider 选择
-
-- **OpenAI**: 适合大多数场景，函数调用支持好
-- **Claude**: 适合需要高质量回复的场景
-- **开源模型**: 适合本地部署或成本敏感的场景
-
-### 5. 对话历史管理
-
-- 大量对话历史可能影响性能和成本
-- 定期清空对话历史（`agent.clear_history()`）
-- 根据需求设置合适的 `max_iterations`
-
-## 扩展示例
-
-你可以基于这些示例创建自己的应用：
-
-1. **集成数据库操作**
-   ```python
-   from db.repository import DatabaseRepository
-   from agent.functions.discovery import register_instance_methods
-
-   db_repo = DatabaseRepository()
-   register_instance_methods(registry, db_repo, prefix="db_")
-   ```
-
-2. **集成业务服务**
-   ```python
-   from services.membership_svc import MembershipService
-
-   membership_svc = MembershipService(db_repo)
-   register_instance_methods(registry, membership_svc, prefix="membership_")
-   ```
-
-3. **自定义函数**
-   ```python
-   @agent_callable(description="自定义业务函数")
-   def my_business_function(param: str) -> dict:
-       # 业务逻辑
-       return {"result": "..."}
-   ```
-
-## 注意事项
-
-1. **API Key 安全**
-   - 不要将 API Key 硬编码在代码中
-   - 使用环境变量或配置文件
-   - 不要将包含 API Key 的代码提交到版本控制
-
-2. **成本控制**
-   - 函数调用会增加 API 调用次数
-   - 合理设置 `max_iterations` 限制
-   - 监控 API 使用量和成本
-
-3. **错误处理**
-   - 函数执行失败时，Agent 会收到错误信息
-   - LLM 可能会重试或使用替代方案
-   - 确保函数有适当的错误处理
-
-4. **性能优化**
-   - 大量对话历史可能影响响应速度
-   - 定期清空对话历史
-   - 考虑使用更快的模型（如 gpt-4o-mini）
-
-## 相关文档
-
-- [Agent 模块文档](../../agent/README.md)
-- [Agent 架构设计](../../design/agent.md)
-- [数据库示例](../database/README.md)
-
-## 问题排查
-
-### 问题：API Key 未设置
-
-**错误信息**：`未设置 OPENAI_API_KEY 环境变量`
-
-**解决方案**：
 ```bash
-export OPENAI_API_KEY="sk-..."
+# 安装依赖
+pip install -r requirements.txt
 ```
 
-### 问题：函数调用失败
+### 设置环境变量
 
-**错误信息**：`Error executing function ...`
+根据您要使用的 Provider，设置相应的 API Key：
 
-**可能原因**：
-1. 函数参数类型不匹配
-2. 函数执行时出错
-3. 函数未正确注册
+```bash
+# OpenAI
+export OPENAI_API_KEY="sk-..."
 
-**解决方案**：
-1. 检查函数参数类型
-2. 查看函数实现是否有错误
-3. 确认函数已正确注册到注册表
+# Claude
+export ANTHROPIC_API_KEY="sk-ant-..."
 
-### 问题：开源模型连接失败
+# MiniMax
+export MINIMAX_API_KEY="sk-api-..."
 
-**错误信息**：`调用开源模型失败: Connection refused`
+# 开源模型（可选）
+export OPEN_SOURCE_BASE_URL="http://localhost:8000/v1"
+export OPEN_SOURCE_MODEL="qwen"
+export OPEN_SOURCE_API_KEY="optional-key"
+```
 
-**解决方案**：
-1. 确认本地模型服务正在运行
-2. 检查 `OPEN_SOURCE_BASE_URL` 是否正确
-3. 确认模型服务支持 OpenAI API 格式
+### 运行单个示例
 
-## 贡献
+```bash
+# 基础示例
+python examples/agent/basic_usage.py
 
-如果你有新的示例想法或发现了问题，欢迎提交 Issue 或 Pull Request。
+# Provider 示例
+python examples/agent/provider_example.py
 
+# 函数调用示例
+python examples/agent/function_calling_example.py
+
+# 高级用法示例
+python examples/agent/advanced_example.py
+```
+
+## 📝 核心 API 概览
+
+### Agent 类
+
+```python
+class Agent:
+    def __init__(
+        self,
+        provider: LLMProvider,
+        function_registry: Optional[FunctionRegistry] = None,
+        system_prompt: Optional[str] = None,
+    )
+    
+    async def chat(
+        self,
+        user_message: str,
+        max_iterations: int = 10,
+        **kwargs: Any,
+    ) -> Dict[str, Any]
+    
+    async def parse_message(
+        self,
+        sender: str,
+        timestamp: str,
+        content: str,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]
+    
+    def clear_history(self) -> None
+    
+    def register_function(
+        self,
+        name: str,
+        description: str,
+        func: Callable[..., Any],
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> None
+```
+
+### create_provider 工厂函数
+
+```python
+provider = create_provider(
+    provider_type: str,  # "openai" | "claude" | "minimax" | "open_source"
+    **kwargs
+)
+```
+
+### FunctionRegistry 类
+
+```python
+class FunctionRegistry:
+    def register(
+        self,
+        name: str,
+        description: str,
+        func: Callable[..., Any],
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> None
+    
+    def get_function(self, name: str) -> Optional[FunctionDefinition]
+    
+    def has_function(self, name: str) -> bool
+    
+    def list_functions(self) -> List[Dict[str, Any]]
+```
+
+## 🎯 使用建议
+
+### 对于新手
+
+1. 先运行 `basic_usage.py` 了解基本流程
+2. 阅读 `QUICKSTART.md` 快速上手
+3. 根据需求选择对应的示例学习
+
+### 对于开发者
+
+1. 查看 `design/agent.md` 了解架构设计
+2. 参考测试文件 `tests/agent/` 了解边界情况
+3. 使用 `FunctionRegistry` 注册业务函数
+4. 通过 `create_provider()` 灵活切换模型
+
+### 对于不同场景
+
+- **简单对话**：使用 `basic_usage.py` 中的示例
+- **需要函数调用**：参考 `function_calling_example.py`
+- **切换模型**：参考 `provider_example.py`
+- **复杂业务**：参考 `advanced_example.py` 并与数据库模块集成
+
+## 📚 相关文档
+
+- **设计文档**：`design/agent.md` - 详细的架构设计和设计决策
+- **API 文档**：查看 `agent/` 目录下各文件的 docstring
+- **测试用例**：`tests/agent/` - 了解各种使用场景和边界情况
+- **数据库示例**：`examples/database/` - 了解如何与数据库模块集成
+
+## ❓ 常见问题
+
+### Q: 如何切换不同的 LLM 提供商？
+
+A: 只需更换 `create_provider()` 的参数：
+
+```python
+# 从 OpenAI 切换到 Claude
+provider = create_provider("claude", api_key="sk-ant-...")
+agent = Agent(provider)  # Agent 代码无需修改
+```
+
+### Q: 如何注册自定义函数？
+
+A: 有多种方式，推荐使用装饰器：
+
+```python
+from agent.functions.discovery import agent_callable
+
+@agent_callable(description="我的业务函数")
+def my_function(param: str) -> dict:
+    # 业务逻辑
+    return {"result": "..."}
+```
+
+### Q: 如何控制函数调用的迭代次数？
+
+A: 在 `chat()` 方法中设置 `max_iterations` 参数：
+
+```python
+response = await agent.chat("复杂查询", max_iterations=5)
+```
+
+### Q: 如何清空对话历史？
+
+A: 使用 `clear_history()` 方法：
+
+```python
+agent.clear_history()  # 保留系统提示词
+```
+
+### Q: 如何与数据库模块集成？
+
+A: 参考 `advanced_example.py`，使用 `register_instance_methods()` 注册数据库方法：
+
+```python
+from agent.functions.discovery import register_instance_methods
+from database import DatabaseManager
+
+db = DatabaseManager("sqlite:///data/store.db")
+register_instance_methods(registry, db, prefix="db_")
+```
+
+### Q: 支持哪些 LLM 提供商？
+
+A: 目前支持：
+- OpenAI（GPT 系列）
+- Claude（Anthropic 系列）
+- MiniMax（国内可用）
+- 兼容 OpenAI API 的开源模型（vLLM、Ollama 等）
+
+### Q: 如何添加新的 Provider？
+
+A: 参考 `design/agent.md` 中的扩展指南，实现 `LLMProvider` 接口并在 `create_provider()` 中注册。
+
+## 🤝 贡献
+
+如果您发现示例有问题或需要添加新的示例，欢迎提交 Issue 或 Pull Request。

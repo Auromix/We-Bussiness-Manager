@@ -20,6 +20,9 @@ dist/
 .env.local
 .env.*.local
 
+# Configuration files with sensitive data
+config.ini
+
 # Database
 *.db
 *.sqlite

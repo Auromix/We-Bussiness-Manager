@@ -2,6 +2,17 @@
 
 本模块实现了 Agent 核心类，负责整合大语言模型（LLM）提供商和函数调用
 机制，提供统一的对话接口。Agent 支持多轮对话、函数调用和自动迭代处理。
+
+对用户透明的多模型支持：
+    Agent 通过 LLMProvider 抽象接口与底层模型交互，用户无需关心
+    使用的是 OpenAI、Claude 还是 MiniMax，切换模型只需更换 Provider。
+
+函数调用流程：
+    1. 用户发送消息 → Agent 调用 Provider
+    2. Provider 返回 LLMResponse（可能包含 function_calls）
+    3. Agent 存储 assistant 消息（包含 tool_calls 和 provider_extras）
+    4. Agent 执行每个函数调用，存储 tool 消息（包含 tool_call_id）
+    5. 重复 2-4 直到 LLM 给出最终回复或达到最大迭代次数
 """
 from typing import List, Dict, Any, Optional, Callable
 from loguru import logger
@@ -14,16 +25,22 @@ from agent.functions.executor import ToolExecutor
 class Agent:
     """Agent 核心类，整合 LLM 提供商和函数调用机制。
 
-    Agent 类提供了统一的对话接口，支持常规对话和函数调用。当 LLM 决定
-    调用函数时，Agent 会自动执行函数并将结果返回给 LLM，实现多轮迭代
-    直到获得最终回复。
+    Agent 提供统一的对话接口，对用户透明地支持不同的模型提供商。
+    当 LLM 决定调用函数时，Agent 自动执行并将结果返回给 LLM，
+    实现多轮迭代直到获得最终回复。
+
+    关键设计：
+        - tool_calls 和 tool_call_id 的正确跟踪，确保多轮工具调用
+          在所有提供商上都能正确工作
+        - provider_extras 透传机制，让 Anthropic 系列提供商能在
+          多轮对话中保持完整的上下文（包括 thinking 块等）
 
     Attributes:
-        provider: LLM 提供商实例，负责与底层模型交互。
-        function_registry: 函数注册表，管理所有可调用的函数。
-        tool_executor: 工具执行器，负责执行函数调用。
-        system_prompt: 系统提示词，用于初始化对话上下文。
-        conversation_history: 对话历史记录，包含所有消息。
+        provider: LLM 提供商实例。
+        function_registry: 函数注册表。
+        tool_executor: 工具执行器。
+        system_prompt: 系统提示词。
+        conversation_history: 对话历史记录。
 
     Example:
         ```python
@@ -37,187 +54,174 @@ class Agent:
         print(response["content"])
         ```
     """
-    
+
     def __init__(
         self,
         provider: LLMProvider,
         function_registry: Optional[FunctionRegistry] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
     ) -> None:
         """初始化 Agent 实例。
 
         Args:
             provider: LLM 提供商实例，必须实现 LLMProvider 接口。
-            function_registry: 函数注册表。如果为 None，将创建空的注册表，
-                此时 Agent 不支持函数调用功能。
-            system_prompt: 系统提示词，用于设置 Agent 的行为和角色。
-                如果提供，会自动添加到对话历史的开头。
-
-        Raises:
-            TypeError: 如果 provider 不是 LLMProvider 的实例。
+            function_registry: 函数注册表。如果为 None，创建空注册表。
+            system_prompt: 系统提示词，设置 Agent 的行为和角色。
         """
         self.provider = provider
         self.function_registry = function_registry or FunctionRegistry()
         self.tool_executor = ToolExecutor(self.function_registry)
         self.system_prompt = system_prompt
         self.conversation_history: List[LLMMessage] = []
-        
-        # 如果提供了系统提示词，添加到历史记录
+
+        # 添加系统提示词到历史记录
         if self.system_prompt:
             self.conversation_history.append(
                 LLMMessage(role="system", content=self.system_prompt)
             )
-    
+
     async def chat(
         self,
         user_message: str,
         max_iterations: int = 10,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """与 Agent 进行对话。
 
-        此方法支持多轮迭代：如果 LLM 决定调用函数，Agent 会执行函数并将
-        结果返回给 LLM，LLM 可以基于结果继续处理或调用更多函数，直到
-        获得最终回复。
+        支持多轮迭代：如果 LLM 决定调用函数，Agent 会执行函数并将
+        结果返回给 LLM，LLM 可以基于结果继续处理或调用更多函数，
+        直到获得最终回复。
 
         Args:
             user_message: 用户输入的消息内容。
-            max_iterations: 最大迭代次数，用于限制函数调用的循环次数。
-                当达到最大次数时，即使还有函数调用也会停止并返回当前结果。
-                默认值为 10。
-            **kwargs: 传递给 LLM 提供商的额外参数，如 temperature、
-                max_tokens 等。
+            max_iterations: 最大迭代次数，默认 10。
+            **kwargs: 传递给 LLM 提供商的额外参数。
 
         Returns:
             包含以下键的字典：
                 - content (str): LLM 的最终回复内容。
-                - function_calls (List[Dict[str, Any]]): 本次对话中调用的
-                    所有函数列表，每个元素包含 name 和 arguments 键。
-                - iterations (int): 实际执行的迭代次数。
-
-        Raises:
-            Exception: 如果 LLM 提供商调用失败或函数执行出错。
-
-        Note:
-            - 用户消息会自动添加到对话历史中。
-            - 如果 LLM 不支持函数调用或未注册任何函数，将直接返回回复。
-            - 函数执行错误会被捕获并作为 function 消息添加到历史中。
+                - function_calls (List[Dict]): 所有函数调用记录。
+                - iterations (int): 实际迭代次数。
         """
         # 添加用户消息到对话历史
         self.conversation_history.append(
             LLMMessage(role="user", content=user_message)
         )
-        
+
         iterations: int = 0
         function_calls_made: List[Dict[str, Any]] = []
-        
+        response: Optional[LLMResponse] = None
+
         # 迭代处理：支持多轮函数调用
         while iterations < max_iterations:
             iterations += 1
-            
-            # 准备函数定义列表（如果支持函数调用）
+
+            # 准备函数定义列表（如果支持函数调用且有注册函数）
             functions: Optional[List[Dict[str, Any]]] = None
-            if self.function_registry and self.provider.supports_function_calling():
-                functions = self.function_registry.list_functions()
-            
+            if (self.function_registry
+                    and self.provider.supports_function_calling()):
+                func_list = self.function_registry.list_functions()
+                if func_list:
+                    functions = func_list
+
             # 调用 LLM 提供商获取回复
-            response: LLMResponse = await self.provider.chat(
+            response = await self.provider.chat(
                 messages=self.conversation_history,
                 functions=functions,
-                **kwargs
+                **kwargs,
             )
-            
-            # 将助手回复添加到对话历史
-            self.conversation_history.append(
-                LLMMessage(role="assistant", content=response.content)
+
+            # 将 assistant 回复添加到对话历史
+            # 关键：保留 tool_calls 和 provider_extras，确保
+            # Provider 在下一轮请求中能恢复完整上下文
+            assistant_msg = LLMMessage(
+                role="assistant",
+                content=response.content,
+                tool_calls=response.function_calls,
+                provider_extras=response.raw_response,
             )
-            
-            # 如果没有函数调用，直接返回最终回复
+            self.conversation_history.append(assistant_msg)
+
+            # 如果没有函数调用，返回最终回复
             if not response.function_calls:
                 return {
                     "content": response.content,
                     "function_calls": function_calls_made,
-                    "iterations": iterations
+                    "iterations": iterations,
                 }
-            
+
             # 处理函数调用：执行每个函数并将结果返回给 LLM
             for func_call in response.function_calls:
                 # 记录函数调用信息
                 function_calls_made.append({
                     "name": func_call.name,
-                    "arguments": func_call.arguments
+                    "arguments": func_call.arguments,
                 })
-                
+
                 try:
                     # 执行函数调用
                     result: Any = await self.tool_executor.execute(
-                        func_call.name,
-                        func_call.arguments
+                        func_call.name, func_call.arguments
                     )
-                    
-                    # 格式化函数执行结果为字符串
+
+                    # 格式化函数执行结果
                     result_str: str = self.tool_executor.format_result(result)
-                    
-                    # 将函数结果作为 function 消息添加到对话历史
-                    # LLM 会在下一轮迭代中看到这个结果
+
+                    # 将函数结果添加到对话历史
+                    # 使用 role="tool" + tool_call_id 关联调用和结果
                     self.conversation_history.append(
                         LLMMessage(
-                            role="function",
+                            role="tool",
                             content=result_str,
-                            name=func_call.name
+                            name=func_call.name,
+                            tool_call_id=func_call.id,
                         )
                     )
-                    
+
                 except Exception as e:
-                    # 函数执行失败时，记录错误并添加到对话历史
-                    logger.error(f"Error executing function {func_call.name}: {e}")
+                    # 函数执行失败，记录错误到对话历史
+                    logger.error(
+                        f"Error executing function {func_call.name}: {e}"
+                    )
                     self.conversation_history.append(
                         LLMMessage(
-                            role="function",
+                            role="tool",
                             content=f"错误: {str(e)}",
-                            name=func_call.name
+                            name=func_call.name,
+                            tool_call_id=func_call.id,
                         )
                     )
-            
+
             # 继续循环，让 LLM 基于函数结果继续处理
-        
-        # 达到最大迭代次数，返回当前结果
+
+        # 达到最大迭代次数
         logger.warning(f"Reached max iterations ({max_iterations})")
         return {
-            "content": response.content,
+            "content": response.content if response else "",
             "function_calls": function_calls_made,
-            "iterations": iterations
+            "iterations": iterations,
         }
-    
+
     async def parse_message(
         self,
         sender: str,
         timestamp: str,
         content: str,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         """解析消息并提取结构化数据（兼容原有接口）。
 
-        此方法用于从非结构化消息中提取结构化数据，通常用于解析聊天记录
-        或消息日志。LLM 会分析消息内容并返回 JSON 格式的结构化数据。
+        此方法用于从非结构化消息中提取结构化数据，LLM 会分析消息内容
+        并返回 JSON 格式的结构化数据。
 
         Args:
-            sender: 消息发送者的名称或标识。
-            timestamp: 消息的时间戳，格式可以是任意字符串。
-            content: 消息的文本内容。
+            sender: 消息发送者。
+            timestamp: 消息时间戳。
+            content: 消息文本内容。
             **kwargs: 传递给 chat 方法的额外参数。
 
         Returns:
-            解析后的结构化数据列表。每个元素是一个字典，包含提取的字段。
-            如果解析失败，可能返回包含错误信息的字典。
-
-        Raises:
-            json.JSONDecodeError: 如果 LLM 返回的内容不是有效的 JSON 格式。
-
-        Note:
-            - 此方法会构建一个包含发送者、时间戳和内容的提示词。
-            - LLM 返回的 JSON 会被解析，支持单个对象或数组格式。
-            - 如果返回的是单个对象，会自动转换为列表。
+            解析后的结构化数据列表。
         """
         # 构建解析提示词
         user_prompt: str = f"""消息发送者: {sender}
@@ -226,84 +230,61 @@ class Agent:
 {content}
 
 请提取结构化数据。返回 JSON 数组格式。"""
-        
+
         # 调用 chat 方法获取 LLM 回复
         response: Dict[str, Any] = await self.chat(user_prompt, **kwargs)
-        
+
         # 解析 JSON 响应
         import json
         import re
-        
+
         content_text: str = response["content"]
-        
-        # 清理可能的 markdown code block（LLM 可能返回 ```json ... ``` 格式）
+
+        # 清理 Markdown code block
         content_text = content_text.strip()
         if content_text.startswith("```"):
             content_text = re.sub(r'^```(?:json)?\s*', '', content_text)
             content_text = re.sub(r'\s*```$', '', content_text)
-        
+
         try:
-            # 解析 JSON 内容
             data: Any = json.loads(content_text)
-            
-            # 处理不同的返回格式
+
             if isinstance(data, dict):
-                # 如果返回的是包含 records 键的字典，提取 records
                 if "records" in data:
                     return data["records"]
-                # 否则将单个对象转换为列表
                 return [data]
             elif isinstance(data, list):
-                # 如果已经是列表，直接返回
                 return data
             else:
-                # 意外的格式，返回噪声标记
                 logger.warning(f"Unexpected response format: {type(data)}")
                 return [{"type": "noise"}]
         except json.JSONDecodeError as e:
-            # JSON 解析失败，记录错误并返回错误信息
-            logger.error(f"JSON parse error: {e}, text: {content_text[:200]}")
+            logger.error(
+                f"JSON parse error: {e}, text: {content_text[:200]}"
+            )
             return [{"type": "noise", "error": str(e)}]
-    
+
     def clear_history(self) -> None:
-        """清空对话历史记录。
-
-        此方法会重置 conversation_history，但会保留系统提示词（如果存在）。
-        清空后，对话历史只包含系统提示词（如果有）。
-
-        Note:
-            - 清空历史后，Agent 将失去之前的所有对话上下文。
-            - 如果设置了 system_prompt，它会被重新添加到历史中。
-        """
+        """清空对话历史记录，保留系统提示词。"""
         self.conversation_history = []
         if self.system_prompt:
             self.conversation_history.append(
                 LLMMessage(role="system", content=self.system_prompt)
             )
-    
+
     def register_function(
         self,
         name: str,
         description: str,
         func: Callable[..., Any],
-        parameters: Optional[Dict[str, Any]] = None
+        parameters: Optional[Dict[str, Any]] = None,
     ) -> None:
         """注册函数到函数注册表（便捷方法）。
 
-        这是一个便捷方法，用于直接向 Agent 的函数注册表中添加新函数。
-        注册后的函数可以被 LLM 通过函数调用机制调用。
-
         Args:
-            name: 函数的唯一标识名称，LLM 将使用此名称调用函数。
-            description: 函数的描述信息，用于帮助 LLM 理解函数的用途。
-                描述应该清晰说明函数的功能、参数和返回值。
-            func: 要注册的函数对象，可以是同步或异步函数。
-            parameters: 函数的参数 Schema（JSON Schema 格式）。如果为 None，
-                将根据函数签名自动推断参数类型。
-
-        Note:
-            - 如果函数名已存在，会覆盖之前的注册（会记录警告日志）。
-            - 参数 Schema 用于 LLM 理解函数参数的类型和约束。
+            name: 函数名称。
+            description: 函数描述。
+            func: 函数对象（同步或异步）。
+            parameters: 参数 Schema（JSON Schema 格式）。
         """
         self.function_registry.register(name, description, func, parameters)
-

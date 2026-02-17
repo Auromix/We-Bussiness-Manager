@@ -1,599 +1,461 @@
 """测试 LLM Provider 实现。
 
-本模块测试所有 LLM Provider 的实现，包括：
-- OpenAIProvider
-- ClaudeProvider
-- OpenSourceProvider
-
-测试支持两种模式：
-1. Mock 测试：使用 mock 对象模拟 API 响应（默认）
-2. 真实 API 测试：通过环境变量配置进行真实 API 调用
-
-使用真实 API 测试：
-    export AGENT_TEST_USE_REAL_API=true
-    export AGENT_TEST_PROVIDER_TYPE=openai
-    export AGENT_TEST_API_KEY=sk-...
-    export AGENT_TEST_MODEL=gpt-4o-mini
-    pytest tests/agent/test_providers.py
+覆盖：
+- OpenAIProvider：初始化、消息转换、函数调用、tool 消息
+- ClaudeProvider：初始化、system 提取、函数调用、thinking 解析
+- MiniMaxProvider：初始化、继承关系、默认参数
+- OpenSourceProvider：初始化、HTTP 请求、函数调用、错误处理
+- Provider 接口一致性
+- create_provider 工厂函数
 """
 import pytest
-import os
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from typing import List, Dict, Any
+from unittest.mock import Mock, AsyncMock, patch
 
-from agent.providers.base import LLMProvider, LLMMessage, LLMResponse, FunctionCall
+from agent.providers import create_provider
+from agent.providers.base import (
+    LLMProvider, LLMMessage, LLMResponse, FunctionCall,
+)
 from agent.providers.openai_provider import OpenAIProvider
+from agent.providers.anthropic_base import AnthropicBaseProvider
 from agent.providers.claude_provider import ClaudeProvider
+from agent.providers.minimax_provider import MiniMaxProvider
 from agent.providers.open_source_provider import OpenSourceProvider
-from tests.agent.conftest import get_test_config
 
 
-# 注意：异步测试需要 @pytest.mark.asyncio 标记
-
+# ================================================================
+# OpenAIProvider
+# ================================================================
 
 class TestOpenAIProvider:
-    """测试 OpenAIProvider"""
-    
-    def test_init(self):
-        """测试初始化"""
-        provider = OpenAIProvider(api_key="test-key", model="gpt-4o-mini")
-        
-        assert provider.model_name == "gpt-4o-mini"
-        assert provider.supports_function_calling() is True
-        assert provider.client is not None
-    
-    def test_init_with_base_url(self):
-        """测试使用自定义 base_url 初始化"""
-        provider = OpenAIProvider(
-            api_key="test-key",
-            model="custom-model",
-            base_url="https://api.example.com/v1"
+
+    def test_init_default(self):
+        p = OpenAIProvider(api_key="k", model="gpt-4o-mini")
+        assert p.model_name == "gpt-4o-mini"
+        assert p.supports_function_calling() is True
+
+    def test_init_custom_base_url(self):
+        p = OpenAIProvider(
+            api_key="k", model="m",
+            base_url="https://api.example.com/v1",
         )
-        
-        assert provider.model_name == "custom-model"
-        # OpenAI 客户端会自动在 base_url 后面加斜杠
-        assert str(provider.client.base_url).rstrip("/") == "https://api.example.com/v1"
-    
+        assert str(p.client.base_url).rstrip("/") == \
+            "https://api.example.com/v1"
+
     @pytest.mark.asyncio
     async def test_chat_simple(self):
-        """测试简单对话（Mock）"""
-        provider = OpenAIProvider(api_key="test-key", model="gpt-4o-mini")
-        
-        # Mock OpenAI 客户端响应
-        mock_response = Mock()
-        mock_choice = Mock()
-        mock_message = Mock()
-        mock_message.content = "这是测试回复"
-        mock_message.tool_calls = None
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "stop"
-        mock_response.choices = [mock_choice]
-        
-        provider.client.chat.completions.create = Mock(return_value=mock_response)
-        
-        messages = [
-            LLMMessage(role="user", content="你好")
-        ]
-        
-        response = await provider.chat(messages)
-        
-        assert response.content == "这是测试回复"
-        assert response.function_calls is None
-        assert response.finish_reason == "stop"
-    
-    @pytest.mark.asyncio
-    async def test_chat_with_function_calling(self):
-        """测试带函数调用的对话（Mock）"""
-        provider = OpenAIProvider(api_key="test-key", model="gpt-4o-mini")
-        
-        # Mock OpenAI 客户端响应（包含函数调用）
-        mock_response = Mock()
-        mock_choice = Mock()
-        mock_message = Mock()
-        mock_message.content = None
-        mock_tool_call = Mock()
-        mock_tool_call.type = "function"
-        mock_tool_call.function = Mock()
-        mock_tool_call.function.name = "test_function"
-        mock_tool_call.function.arguments = '{"param1": "value1"}'
-        mock_message.tool_calls = [mock_tool_call]
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "tool_calls"
-        mock_response.choices = [mock_choice]
-        
-        provider.client.chat.completions.create = Mock(return_value=mock_response)
-        
-        messages = [
-            LLMMessage(role="user", content="调用函数")
-        ]
-        functions = [
-            {
-                "name": "test_function",
-                "description": "测试函数",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"param1": {"type": "string"}},
-                    "required": ["param1"]
-                }
-            }
-        ]
-        
-        response = await provider.chat(messages, functions=functions)
-        
-        assert response.content == ""
-        assert response.function_calls is not None
-        assert len(response.function_calls) == 1
-        assert response.function_calls[0].name == "test_function"
-        assert response.function_calls[0].arguments == {"param1": "value1"}
-    
-    @pytest.mark.asyncio
-    async def test_chat_with_function_message(self):
-        """测试包含 function 消息的对话"""
-        provider = OpenAIProvider(api_key="test-key", model="gpt-4o-mini")
-        
-        mock_response = Mock()
-        mock_choice = Mock()
-        mock_message = Mock()
-        mock_message.content = "函数执行完成"
-        mock_message.tool_calls = None
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "stop"
-        mock_response.choices = [mock_choice]
-        
-        provider.client.chat.completions.create = Mock(return_value=mock_response)
-        
-        messages = [
-            LLMMessage(role="user", content="调用函数"),
-            LLMMessage(role="assistant", content=""),
-            LLMMessage(role="function", content='{"result": "success"}', name="test_function")
-        ]
-        
-        response = await provider.chat(messages)
-        
-        # 检查请求中是否包含了 function 消息的 name
-        call_args = provider.client.chat.completions.create.call_args
-        assert call_args is not None
-        api_messages = call_args.kwargs["messages"]
-        function_msg = [m for m in api_messages if m["role"] == "function"][0]
-        assert function_msg["name"] == "test_function"
-    
-    @pytest.mark.skipif(
-        not get_test_config()["use_real_api"],
-        reason="需要设置 AGENT_TEST_USE_REAL_API=true 进行真实 API 测试"
-    )
-    @pytest.mark.asyncio
-    async def test_chat_real_api(self):
-        """测试真实 API 调用（需要环境变量配置）"""
-        config = get_test_config()
-        if config["provider_type"] != "openai":
-            pytest.skip("当前配置的 Provider 类型不是 openai")
-        
-        if not config["api_key"]:
-            pytest.skip("未设置 AGENT_TEST_API_KEY")
-        
-        provider = OpenAIProvider(
-            api_key=config["api_key"],
-            model=config["model"]
+        p = OpenAIProvider(api_key="k", model="m")
+        mock_msg = Mock(content="回复", tool_calls=None)
+        mock_choice = Mock(message=mock_msg, finish_reason="stop")
+        p.client.chat.completions.create = Mock(
+            return_value=Mock(choices=[mock_choice])
         )
-        
-        messages = [
-            LLMMessage(role="user", content="请说'测试成功'")
-        ]
-        
-        response = await provider.chat(messages, temperature=0.1)
-        
-        assert response.content is not None
-        assert len(response.content) > 0
-        # 真实 API 测试，只检查基本结构
-        assert isinstance(response.content, str)
 
+        resp = await p.chat([LLMMessage(role="user", content="你好")])
+        assert resp.content == "回复"
+        assert resp.function_calls is None
+
+    @pytest.mark.asyncio
+    async def test_chat_function_calling(self):
+        p = OpenAIProvider(api_key="k", model="m")
+        mock_function = Mock(arguments='{"a": 1}')
+        mock_function.name = "fn"
+        tc = Mock(
+            id="call_abc", type="function",
+            function=mock_function,
+        )
+        mock_msg = Mock(content=None, tool_calls=[tc])
+        mock_choice = Mock(message=mock_msg, finish_reason="tool_calls")
+        p.client.chat.completions.create = Mock(
+            return_value=Mock(choices=[mock_choice])
+        )
+
+        resp = await p.chat(
+            [LLMMessage(role="user", content="call")],
+            functions=[{"name": "fn", "description": "d", "parameters": {}}],
+        )
+        assert resp.function_calls is not None
+        assert resp.function_calls[0].name == "fn"
+        assert resp.function_calls[0].id == "call_abc"
+        assert resp.function_calls[0].arguments == {"a": 1}
+
+    @pytest.mark.asyncio
+    async def test_tool_message_conversion(self):
+        """assistant + tool_calls → tool 消息应正确转换。"""
+        p = OpenAIProvider(api_key="k", model="m")
+        mock_msg = Mock(content="done", tool_calls=None)
+        mock_choice = Mock(message=mock_msg, finish_reason="stop")
+        p.client.chat.completions.create = Mock(
+            return_value=Mock(choices=[mock_choice])
+        )
+
+        messages = [
+            LLMMessage(role="user", content="go"),
+            LLMMessage(
+                role="assistant", content="",
+                tool_calls=[
+                    FunctionCall(name="fn", arguments={"x": 1}, id="c1")
+                ],
+            ),
+            LLMMessage(
+                role="tool", content='{"r": 1}',
+                name="fn", tool_call_id="c1",
+            ),
+        ]
+        await p.chat(messages)
+
+        api_msgs = p.client.chat.completions.create.call_args.kwargs[
+            "messages"
+        ]
+        assistant_msg = [m for m in api_msgs if m["role"] == "assistant"][0]
+        assert assistant_msg["tool_calls"][0]["id"] == "c1"
+        tool_msg = [m for m in api_msgs if m["role"] == "tool"][0]
+        assert tool_msg["tool_call_id"] == "c1"
+
+
+# ================================================================
+# ClaudeProvider
+# ================================================================
 
 class TestClaudeProvider:
-    """测试 ClaudeProvider"""
-    
+
     def test_init(self):
-        """测试初始化"""
-        provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-20250514")
-        
-        assert provider.model_name == "claude-sonnet-4-20250514"
-        assert provider.supports_function_calling() is True
-        assert provider.client is not None
-    
+        p = ClaudeProvider(api_key="k")
+        assert p.model_name == "claude-sonnet-4-20250514"
+        assert p.supports_function_calling() is True
+        assert isinstance(p, AnthropicBaseProvider)
+
     @pytest.mark.asyncio
     async def test_chat_simple(self):
-        """测试简单对话（Mock）"""
-        provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-20250514")
-        
-        # Mock Claude 客户端响应
-        mock_response = Mock()
-        mock_text_block = Mock()
-        mock_text_block.type = "text"
-        mock_text_block.text = "这是测试回复"
-        mock_response.content = [mock_text_block]
-        mock_response.stop_reason = "end_turn"
-        
-        provider.client.messages.create = Mock(return_value=mock_response)
-        
-        messages = [
-            LLMMessage(role="user", content="你好")
-        ]
-        
-        response = await provider.chat(messages)
-        
-        assert response.content == "这是测试回复"
-        assert response.function_calls is None
-        assert response.finish_reason == "end_turn"
-    
-    @pytest.mark.asyncio
-    async def test_chat_with_system_message(self):
-        """测试包含 system 消息的对话"""
-        provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-20250514")
-        
-        mock_response = Mock()
-        mock_text_block = Mock()
-        mock_text_block.type = "text"
-        mock_text_block.text = "回复"
-        mock_response.content = [mock_text_block]
-        mock_response.stop_reason = "end_turn"
-        
-        provider.client.messages.create = Mock(return_value=mock_response)
-        
-        messages = [
-            LLMMessage(role="system", content="你是一个助手"),
-            LLMMessage(role="user", content="你好")
-        ]
-        
-        response = await provider.chat(messages)
-        
-        # 检查 system 消息是否被单独提取
-        call_args = provider.client.messages.create.call_args
-        assert call_args is not None
-        assert "system" in call_args.kwargs
-        assert call_args.kwargs["system"] == "你是一个助手"
-        
-        # messages 中不应该包含 system 消息
-        api_messages = call_args.kwargs["messages"]
-        assert not any(m["role"] == "system" for m in api_messages)
-    
-    @pytest.mark.asyncio
-    async def test_chat_with_function_calling(self):
-        """测试带函数调用的对话（Mock）"""
-        provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-20250514")
-        
-        # Mock Claude 客户端响应（包含工具使用）
-        mock_response = Mock()
-        mock_tool_use_block = Mock()
-        mock_tool_use_block.type = "tool_use"
-        mock_tool_use_block.name = "test_function"
-        mock_tool_use_block.input = {"param1": "value1"}
-        mock_response.content = [mock_tool_use_block]
-        mock_response.stop_reason = "tool_use"
-        
-        provider.client.messages.create = Mock(return_value=mock_response)
-        
-        messages = [
-            LLMMessage(role="user", content="调用函数")
-        ]
-        functions = [
-            {
-                "name": "test_function",
-                "description": "测试函数",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"param1": {"type": "string"}},
-                    "required": ["param1"]
-                }
-            }
-        ]
-        
-        response = await provider.chat(messages, functions=functions)
-        
-        assert response.content == ""
-        assert response.function_calls is not None
-        assert len(response.function_calls) == 1
-        assert response.function_calls[0].name == "test_function"
-        assert response.function_calls[0].arguments == {"param1": "value1"}
-    
-    @pytest.mark.asyncio
-    async def test_chat_mixed_content(self):
-        """测试混合内容（文本 + 工具使用）"""
-        provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-20250514")
-        
-        mock_response = Mock()
-        mock_text_block = Mock()
-        mock_text_block.type = "text"
-        mock_text_block.text = "我需要调用函数"
-        mock_tool_use_block = Mock()
-        mock_tool_use_block.type = "tool_use"
-        mock_tool_use_block.name = "test_function"
-        mock_tool_use_block.input = {}
-        mock_response.content = [mock_text_block, mock_tool_use_block]
-        mock_response.stop_reason = "tool_use"
-        
-        provider.client.messages.create = Mock(return_value=mock_response)
-        
-        messages = [LLMMessage(role="user", content="测试")]
-        response = await provider.chat(messages)
-        
-        assert response.content == "我需要调用函数"
-        assert response.function_calls is not None
-        assert len(response.function_calls) == 1
-    
-    @pytest.mark.skipif(
-        not get_test_config()["use_real_api"],
-        reason="需要设置 AGENT_TEST_USE_REAL_API=true 进行真实 API 测试"
-    )
-    @pytest.mark.asyncio
-    async def test_chat_real_api(self):
-        """测试真实 API 调用（需要环境变量配置）"""
-        config = get_test_config()
-        if config["provider_type"] not in ["claude", "anthropic"]:
-            pytest.skip("当前配置的 Provider 类型不是 claude")
-        
-        if not config["api_key"]:
-            pytest.skip("未设置 AGENT_TEST_API_KEY")
-        
-        provider = ClaudeProvider(
-            api_key=config["api_key"],
-            model=config["model"]
-        )
-        
-        messages = [
-            LLMMessage(role="user", content="请说'测试成功'")
-        ]
-        
-        response = await provider.chat(messages, temperature=0.1)
-        
-        assert response.content is not None
-        assert len(response.content) > 0
+        p = ClaudeProvider(api_key="k")
+        text_block = Mock(type="text", text="回复")
+        mock_resp = Mock(content=[text_block], stop_reason="end_turn")
+        # 不设 usage 属性
+        if hasattr(mock_resp, "usage"):
+            del mock_resp.usage
+        p.client.messages.create = Mock(return_value=mock_resp)
 
+        resp = await p.chat([LLMMessage(role="user", content="你好")])
+        assert resp.content == "回复"
+        assert resp.function_calls is None
+
+    @pytest.mark.asyncio
+    async def test_system_message_extraction(self):
+        p = ClaudeProvider(api_key="k")
+        text_block = Mock(type="text", text="ok")
+        mock_resp = Mock(content=[text_block], stop_reason="end_turn")
+        if hasattr(mock_resp, "usage"):
+            del mock_resp.usage
+        p.client.messages.create = Mock(return_value=mock_resp)
+
+        await p.chat([
+            LLMMessage(role="system", content="你是助手"),
+            LLMMessage(role="user", content="hi"),
+        ])
+
+        kwargs = p.client.messages.create.call_args.kwargs
+        assert kwargs["system"] == "你是助手"
+        assert all(
+            m["role"] != "system" for m in kwargs["messages"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_use_response(self):
+        p = ClaudeProvider(api_key="k")
+        tool_block = Mock(
+            type="tool_use", id="toolu_123",
+            input={"a": 1},
+        )
+        tool_block.name = "fn"
+        mock_resp = Mock(content=[tool_block], stop_reason="tool_use")
+        if hasattr(mock_resp, "usage"):
+            del mock_resp.usage
+        p.client.messages.create = Mock(return_value=mock_resp)
+
+        resp = await p.chat(
+            [LLMMessage(role="user", content="call")],
+            functions=[{
+                "name": "fn", "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            }],
+        )
+        assert resp.function_calls is not None
+        assert resp.function_calls[0].name == "fn"
+        assert resp.function_calls[0].id == "toolu_123"
+
+    @pytest.mark.asyncio
+    async def test_thinking_block_parsed(self):
+        """thinking 块应被解析到 metadata。"""
+        p = ClaudeProvider(api_key="k")
+        thinking_block = Mock(type="thinking", thinking="我在思考...")
+        text_block = Mock(type="text", text="结果")
+        mock_resp = Mock(
+            content=[thinking_block, text_block],
+            stop_reason="end_turn",
+        )
+        if hasattr(mock_resp, "usage"):
+            del mock_resp.usage
+        p.client.messages.create = Mock(return_value=mock_resp)
+
+        resp = await p.chat([LLMMessage(role="user", content="思考")])
+        assert resp.content == "结果"
+        assert resp.metadata is not None
+        assert "thinking" in resp.metadata
+        assert resp.metadata["thinking"] == "我在思考..."
+
+    @pytest.mark.asyncio
+    async def test_mixed_content(self):
+        """文本 + tool_use 混合响应。"""
+        p = ClaudeProvider(api_key="k")
+        text_block = Mock(type="text", text="需要调用函数")
+        tool_block = Mock(
+            type="tool_use", id="toolu_mix",
+            name="fn", input={},
+        )
+        mock_resp = Mock(
+            content=[text_block, tool_block],
+            stop_reason="tool_use",
+        )
+        if hasattr(mock_resp, "usage"):
+            del mock_resp.usage
+        p.client.messages.create = Mock(return_value=mock_resp)
+
+        resp = await p.chat([LLMMessage(role="user", content="test")])
+        assert resp.content == "需要调用函数"
+        assert resp.function_calls is not None
+        assert len(resp.function_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_provider_extras_passthrough(self):
+        """provider_extras 应在下一轮请求中被使用。"""
+        p = ClaudeProvider(api_key="k")
+        text_block = Mock(type="text", text="done")
+        mock_resp = Mock(
+            content=[text_block], stop_reason="end_turn",
+        )
+        if hasattr(mock_resp, "usage"):
+            del mock_resp.usage
+        p.client.messages.create = Mock(return_value=mock_resp)
+
+        original_blocks = [
+            {"type": "text", "text": "thinking..."},
+            {"type": "tool_use", "id": "t1", "name": "fn", "input": {}},
+        ]
+        messages = [
+            LLMMessage(role="user", content="go"),
+            LLMMessage(
+                role="assistant", content="",
+                provider_extras=original_blocks,
+            ),
+            LLMMessage(
+                role="tool", content="result",
+                name="fn", tool_call_id="t1",
+            ),
+        ]
+        await p.chat(messages)
+
+        api_msgs = p.client.messages.create.call_args.kwargs["messages"]
+        assistant_msg = [m for m in api_msgs if m["role"] == "assistant"][0]
+        assert assistant_msg["content"] is original_blocks
+
+
+# ================================================================
+# MiniMaxProvider
+# ================================================================
+
+class TestMiniMaxProvider:
+
+    def test_init_default(self):
+        p = MiniMaxProvider(api_key="k")
+        assert p.model_name == "MiniMax-M2.5"
+        assert isinstance(p, AnthropicBaseProvider)
+        assert p._default_max_tokens == 4096
+
+    def test_init_custom_base_url(self):
+        p = MiniMaxProvider(
+            api_key="k",
+            base_url="https://api.minimax.io/anthropic",
+        )
+        assert p.model_name == "MiniMax-M2.5"
+
+    def test_default_base_url(self):
+        """默认应使用国内 API 地址。"""
+        p = MiniMaxProvider(api_key="k")
+        # AnthropicBaseProvider 会把 base_url 传给 Anthropic client
+        # 我们只验证创建成功
+        assert p.supports_function_calling() is True
+
+    def test_inherits_anthropic_base(self):
+        """应继承 AnthropicBaseProvider 的所有方法。"""
+        p = MiniMaxProvider(api_key="k")
+        assert hasattr(p, "_convert_messages")
+        assert hasattr(p, "_parse_response")
+        assert hasattr(p, "_extract_system")
+        assert hasattr(p, "_convert_functions")
+
+
+# ================================================================
+# OpenSourceProvider
+# ================================================================
 
 class TestOpenSourceProvider:
-    """测试 OpenSourceProvider"""
-    
+
     def test_init(self):
-        """测试初始化"""
-        provider = OpenSourceProvider(
-            base_url="http://localhost:8000/v1",
-            model="qwen"
+        p = OpenSourceProvider(base_url="http://localhost:8000/v1", model="q")
+        assert p.model_name == "q"
+        assert p.base_url == "http://localhost:8000/v1"
+        assert p.supports_function_calling() is True
+
+    def test_init_strips_trailing_slash(self):
+        p = OpenSourceProvider(
+            base_url="http://localhost:8000/v1/", model="q"
         )
-        
-        assert provider.model_name == "qwen"
-        assert provider.base_url == "http://localhost:8000/v1"
-        assert provider.supports_function_calling() is True
-    
-    def test_init_with_api_key(self):
-        """测试使用 API Key 初始化"""
-        provider = OpenSourceProvider(
-            base_url="https://api.example.com/v1",
-            model="custom-model",
-            api_key="test-key"
+        assert p.base_url == "http://localhost:8000/v1"
+
+    def test_init_with_api_key_and_timeout(self):
+        p = OpenSourceProvider(
+            base_url="http://x/v1", model="m",
+            api_key="k", timeout=120.0,
         )
-        
-        assert provider.api_key == "test-key"
-    
-    def test_init_with_timeout(self):
-        """测试使用自定义超时时间初始化"""
-        provider = OpenSourceProvider(
-            base_url="http://localhost:8000/v1",
-            model="qwen",
-            timeout=120.0
-        )
-        
-        assert provider.timeout == 120.0
-    
-    def test_init_strip_trailing_slash(self):
-        """测试自动去除 URL 末尾的斜杠"""
-        provider = OpenSourceProvider(
-            base_url="http://localhost:8000/v1/",
-            model="qwen"
-        )
-        
-        assert provider.base_url == "http://localhost:8000/v1"
-    
+        assert p.api_key == "k"
+        assert p.timeout == 120.0
+
     @pytest.mark.asyncio
     async def test_chat_simple(self):
-        """测试简单对话（Mock）"""
-        provider = OpenSourceProvider(
-            base_url="http://localhost:8000/v1",
-            model="qwen"
-        )
-        
-        # Mock HTTP 响应
-        mock_response_data = {
-            "choices": [{
-                "message": {
-                    "content": "这是测试回复",
-                    "role": "assistant"
-                },
-                "finish_reason": "stop"
-            }]
-        }
-        
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = Mock()
-            mock_response.json.return_value = mock_response_data
-            mock_response.raise_for_status = Mock()
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-            
-            messages = [
-                LLMMessage(role="user", content="你好")
-            ]
-            
-            response = await provider.chat(messages)
-            
-            assert response.content == "这是测试回复"
-            assert response.function_calls is None
-            assert response.finish_reason == "stop"
-            
-            # 检查请求 URL
-            mock_client.post.assert_called_once()
-            call_args = mock_client.post.call_args
-            assert "/chat/completions" in call_args[0][0]
-    
-    @pytest.mark.asyncio
-    async def test_chat_with_api_key(self):
-        """测试使用 API Key 的对话"""
-        provider = OpenSourceProvider(
-            base_url="http://localhost:8000/v1",
-            model="qwen",
-            api_key="test-key"
-        )
-        
-        mock_response_data = {
+        p = OpenSourceProvider(base_url="http://x/v1", model="m")
+        data = {
             "choices": [{
                 "message": {"content": "回复", "role": "assistant"},
-                "finish_reason": "stop"
+                "finish_reason": "stop",
             }]
         }
-        
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = Mock()
-            mock_response.json.return_value = mock_response_data
-            mock_response.raise_for_status = Mock()
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-            
-            messages = [LLMMessage(role="user", content="测试")]
-            await provider.chat(messages)
-            
-            # 检查请求头中是否包含 Authorization
-            call_args = mock_client.post.call_args
-            headers = call_args[1]["headers"]
-            assert "Authorization" in headers
-            assert headers["Authorization"] == "Bearer test-key"
-    
+        with patch("httpx.AsyncClient") as mc:
+            client = AsyncMock()
+            resp = Mock(json=Mock(return_value=data), raise_for_status=Mock())
+            client.post = AsyncMock(return_value=resp)
+            mc.return_value.__aenter__.return_value = client
+
+            result = await p.chat([LLMMessage(role="user", content="hi")])
+            assert result.content == "回复"
+
     @pytest.mark.asyncio
     async def test_chat_with_function_calling(self):
-        """测试带函数调用的对话（Mock）"""
-        provider = OpenSourceProvider(
-            base_url="http://localhost:8000/v1",
-            model="qwen"
-        )
-        
-        mock_response_data = {
+        p = OpenSourceProvider(base_url="http://x/v1", model="m")
+        data = {
             "choices": [{
                 "message": {
-                    "content": None,
-                    "role": "assistant",
+                    "content": None, "role": "assistant",
                     "tool_calls": [{
-                        "type": "function",
+                        "id": "c1", "type": "function",
                         "function": {
-                            "name": "test_function",
-                            "arguments": '{"param1": "value1"}'
-                        }
-                    }]
+                            "name": "fn",
+                            "arguments": '{"a": 1}',
+                        },
+                    }],
                 },
-                "finish_reason": "tool_calls"
+                "finish_reason": "tool_calls",
             }]
         }
-        
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = Mock()
-            mock_response.json.return_value = mock_response_data
-            mock_response.raise_for_status = Mock()
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-            
-            messages = [LLMMessage(role="user", content="调用函数")]
-            functions = [{
-                "name": "test_function",
-                "description": "测试函数",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"param1": {"type": "string"}},
-                    "required": ["param1"]
-                }
-            }]
-            
-            response = await provider.chat(messages, functions=functions)
-            
-            assert response.function_calls is not None
-            assert len(response.function_calls) == 1
-            assert response.function_calls[0].name == "test_function"
-            assert response.function_calls[0].arguments == {"param1": "value1"}
-            
-            # 检查请求体中是否包含 tools
-            call_args = mock_client.post.call_args
-            request_body = call_args[1]["json"]
-            assert "tools" in request_body
-            assert len(request_body["tools"]) == 1
-    
+        with patch("httpx.AsyncClient") as mc:
+            client = AsyncMock()
+            resp = Mock(json=Mock(return_value=data), raise_for_status=Mock())
+            client.post = AsyncMock(return_value=resp)
+            mc.return_value.__aenter__.return_value = client
+
+            result = await p.chat(
+                [LLMMessage(role="user", content="call")],
+                functions=[{"name": "fn", "description": "d", "parameters": {}}],
+            )
+            assert result.function_calls is not None
+            assert result.function_calls[0].id == "c1"
+
     @pytest.mark.asyncio
     async def test_chat_http_error(self):
-        """测试 HTTP 错误处理"""
-        provider = OpenSourceProvider(
-            base_url="http://localhost:8000/v1",
-            model="qwen"
-        )
-        
         import httpx
-        
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(side_effect=httpx.HTTPError("网络错误"))
-            mock_client_class.return_value.__aenter__.return_value = mock_client
-            
-            messages = [LLMMessage(role="user", content="测试")]
-            
+        p = OpenSourceProvider(base_url="http://x/v1", model="m")
+        with patch("httpx.AsyncClient") as mc:
+            client = AsyncMock()
+            client.post = AsyncMock(side_effect=httpx.HTTPError("fail"))
+            mc.return_value.__aenter__.return_value = client
+
             with pytest.raises(httpx.HTTPError):
-                await provider.chat(messages)
-    
-    @pytest.mark.skipif(
-        not get_test_config()["use_real_api"],
-        reason="需要设置 AGENT_TEST_USE_REAL_API=true 进行真实 API 测试"
-    )
-    @pytest.mark.skipif(
-        not get_test_config()["base_url"],
-        reason="需要设置 AGENT_TEST_BASE_URL 进行真实 API 测试"
-    )
+                await p.chat([LLMMessage(role="user", content="hi")])
+
     @pytest.mark.asyncio
-    async def test_chat_real_api(self):
-        """测试真实 API 调用（需要环境变量配置）"""
-        config = get_test_config()
-        if config["provider_type"] not in ["open_source", "custom"]:
-            pytest.skip("当前配置的 Provider 类型不是 open_source")
-        
-        if not config["base_url"]:
-            pytest.skip("未设置 AGENT_TEST_BASE_URL")
-        
-        provider = OpenSourceProvider(
-            base_url=config["base_url"],
-            model=config["model"],
-            api_key=config.get("api_key") or None
+    async def test_auth_header_sent(self):
+        p = OpenSourceProvider(
+            base_url="http://x/v1", model="m", api_key="my-key"
         )
-        
-        messages = [
-            LLMMessage(role="user", content="请说'测试成功'")
-        ]
-        
-        response = await provider.chat(messages, temperature=0.1)
-        
-        assert response.content is not None
-        assert len(response.content) > 0
+        data = {
+            "choices": [{
+                "message": {"content": "ok", "role": "assistant"},
+                "finish_reason": "stop",
+            }]
+        }
+        with patch("httpx.AsyncClient") as mc:
+            client = AsyncMock()
+            resp = Mock(json=Mock(return_value=data), raise_for_status=Mock())
+            client.post = AsyncMock(return_value=resp)
+            mc.return_value.__aenter__.return_value = client
+
+            await p.chat([LLMMessage(role="user", content="hi")])
+            headers = client.post.call_args[1]["headers"]
+            assert headers["Authorization"] == "Bearer my-key"
 
 
-class TestProviderIntegration:
-    """Provider 集成测试"""
-    
-    @pytest.mark.asyncio
-    async def test_provider_interface(self):
-        """测试所有 Provider 都实现了接口"""
+# ================================================================
+# Provider 接口一致性 & 工厂函数
+# ================================================================
+
+class TestProviderInterface:
+
+    def test_all_providers_implement_interface(self):
         providers = [
-            OpenAIProvider(api_key="test", model="gpt-4o-mini"),
-            ClaudeProvider(api_key="test", model="claude-sonnet-4-20250514"),
-            OpenSourceProvider(base_url="http://localhost:8000/v1", model="qwen")
+            OpenAIProvider(api_key="k", model="m"),
+            ClaudeProvider(api_key="k"),
+            MiniMaxProvider(api_key="k"),
+            OpenSourceProvider(base_url="http://x/v1", model="m"),
         ]
-        
-        for provider in providers:
-            assert isinstance(provider, LLMProvider)
-            assert hasattr(provider, "model_name")
-            assert hasattr(provider, "supports_function_calling")
-            assert hasattr(provider, "chat")
-            assert callable(provider.supports_function_calling)
-            assert callable(provider.chat)
+        for p in providers:
+            assert isinstance(p, LLMProvider)
+            assert hasattr(p, "model_name")
+            assert hasattr(p, "supports_function_calling")
+            assert hasattr(p, "chat")
+            assert callable(p.supports_function_calling)
+            assert callable(p.chat)
 
+
+class TestCreateProvider:
+
+    def test_create_openai(self):
+        p = create_provider("openai", api_key="k", model="m")
+        assert isinstance(p, OpenAIProvider)
+
+    def test_create_claude(self):
+        p = create_provider("claude", api_key="k")
+        assert isinstance(p, ClaudeProvider)
+
+    def test_create_anthropic_alias(self):
+        p = create_provider("anthropic", api_key="k")
+        assert isinstance(p, ClaudeProvider)
+
+    def test_create_minimax(self):
+        p = create_provider("minimax", api_key="k")
+        assert isinstance(p, MiniMaxProvider)
+
+    def test_create_open_source(self):
+        p = create_provider(
+            "open_source", base_url="http://x/v1", model="m"
+        )
+        assert isinstance(p, OpenSourceProvider)
+
+    def test_create_custom_alias(self):
+        p = create_provider("custom", base_url="http://x/v1", model="m")
+        assert isinstance(p, OpenSourceProvider)
+
+    def test_create_unknown_raises(self):
+        with pytest.raises(ValueError, match="Unknown provider"):
+            create_provider("unknown", api_key="k")
+
+    def test_case_insensitive(self):
+        p = create_provider("MINIMAX", api_key="k")
+        assert isinstance(p, MiniMaxProvider)

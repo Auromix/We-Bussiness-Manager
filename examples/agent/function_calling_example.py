@@ -1,11 +1,11 @@
-"""Agent 函数调用示例
+"""函数调用示例 - Agent 函数调用功能
 
 本示例展示如何使用 Agent 进行函数调用，包括：
 1. 使用装饰器标记函数
 2. 手动注册函数
 3. 自动注册实例方法
 4. 自动注册多个对象
-5. Agent 自动调用函数并处理结果
+5. 多步骤函数调用
 
 运行方式：
     python examples/agent/function_calling_example.py
@@ -16,9 +16,9 @@ import asyncio
 from pathlib import Path
 from typing import Dict, Any, List
 
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent import Agent, create_provider, FunctionRegistry
 from agent.functions.discovery import (
@@ -56,9 +56,8 @@ def get_weather(city: str, unit: str = "celsius") -> Dict[str, Any]:
         "深圳": {"temp": 30, "condition": "小雨", "humidity": 80},
     }
     
-    temp = weather_data.get(city, {"temp": 20, "condition": "未知", "humidity": 50})["temp"]
-    condition = weather_data.get(city, {"temp": 20, "condition": "未知", "humidity": 50})["condition"]
-    humidity = weather_data.get(city, {"temp": 20, "condition": "未知", "humidity": 50})["humidity"]
+    data = weather_data.get(city, {"temp": 20, "condition": "未知", "humidity": 50})
+    temp = data["temp"]
     
     if unit == "fahrenheit":
         temp = temp * 9 / 5 + 32
@@ -67,36 +66,20 @@ def get_weather(city: str, unit: str = "celsius") -> Dict[str, Any]:
         "city": city,
         "temperature": temp,
         "unit": unit,
-        "condition": condition,
-        "humidity": humidity
+        "condition": data["condition"],
+        "humidity": data["humidity"]
     }
 
 
 @agent_callable(description="计算两个数字的和")
 def add_numbers(a: float, b: float) -> Dict[str, Any]:
-    """计算两个数字的和
-    
-    Args:
-        a: 第一个数字
-        b: 第二个数字
-    
-    Returns:
-        包含计算结果的字典
-    """
+    """计算两个数字的和"""
     return {"result": a + b, "operation": "add"}
 
 
 @agent_callable(description="获取用户信息")
 def get_user_info(user_id: int) -> Dict[str, Any]:
-    """根据用户ID获取用户信息
-    
-    Args:
-        user_id: 用户ID
-    
-    Returns:
-        用户信息字典
-    """
-    # 模拟用户数据
+    """根据用户ID获取用户信息"""
     users = {
         1: {"name": "张三", "email": "zhangsan@example.com", "age": 25},
         2: {"name": "李四", "email": "lisi@example.com", "age": 30},
@@ -173,25 +156,31 @@ async def example_decorator_functions():
         logger.warning("未设置 OPENAI_API_KEY 环境变量，跳过此示例")
         return
     
-    # 创建函数注册表
+    # 1.1 创建函数注册表
+    logger.info("\n1️⃣ 创建函数注册表")
+    logger.info("-" * 60)
     registry = FunctionRegistry()
     
-    # 自动注册使用装饰器标记的函数
+    # 1.2 自动注册使用装饰器标记的函数
+    logger.info("\n2️⃣ 自动注册使用装饰器标记的函数")
+    logger.info("-" * 60)
     auto_discover_and_register(registry, [get_weather, add_numbers, get_user_info])
     
-    # 创建 Agent
+    # 查看注册的函数
+    functions = registry.list_functions()
+    logger.info(f"✅ 已注册 {len(functions)} 个函数:")
+    for func in functions:
+        logger.info(f"   - {func['name']}: {func['description']}")
+    
+    # 1.3 创建 Agent
+    logger.info("\n3️⃣ 创建 Agent 并进行对话")
+    logger.info("-" * 60)
     provider = create_provider("openai", api_key=api_key, model="gpt-4o-mini")
     agent = Agent(
         provider,
         registry,
         system_prompt="你是一个有用的助手，可以使用函数来获取信息或进行计算。"
     )
-    
-    # 查看注册的函数
-    functions = registry.list_functions()
-    logger.info(f"\n已注册 {len(functions)} 个函数:")
-    for func in functions:
-        logger.info(f"  - {func['name']}: {func['description']}")
     
     # 测试函数调用
     logger.info("\n用户: 北京今天天气怎么样？")
@@ -217,24 +206,33 @@ async def example_manual_registration():
         logger.warning("未设置 OPENAI_API_KEY 环境变量，跳过此示例")
         return
     
-    # 定义函数
+    # 2.1 定义函数
+    logger.info("\n1️⃣ 定义函数")
+    logger.info("-" * 60)
     def format_date(date_str: str, format_type: str = "YYYY-MM-DD") -> Dict[str, Any]:
         """格式化日期字符串"""
         return {"formatted_date": f"{date_str} ({format_type})", "original": date_str}
     
-    # 创建函数注册表并手动注册
+    logger.info("✅ 函数已定义: format_date")
+    
+    # 2.2 创建函数注册表并手动注册
+    logger.info("\n2️⃣ 手动注册函数到注册表")
+    logger.info("-" * 60)
     registry = FunctionRegistry()
     registry.register(
         name="format_date",
         description="格式化日期字符串，支持多种格式",
         func=format_date
     )
+    logger.info("✅ 函数已注册")
     
-    # 创建 Agent
+    # 2.3 创建 Agent 并测试
+    logger.info("\n3️⃣ 创建 Agent 并进行对话")
+    logger.info("-" * 60)
     provider = create_provider("openai", api_key=api_key, model="gpt-4o-mini")
     agent = Agent(provider, registry)
     
-    logger.info("\n用户: 格式化日期 '2024-01-01'")
+    logger.info("用户: 格式化日期 '2024-01-01'")
     response = await agent.chat("格式化日期 '2024-01-01'")
     logger.info(f"助手: {response['content']}")
     
@@ -252,18 +250,29 @@ async def example_instance_methods():
         logger.warning("未设置 OPENAI_API_KEY 环境变量，跳过此示例")
         return
     
-    # 创建实例
+    # 3.1 创建实例
+    logger.info("\n1️⃣ 创建实例")
+    logger.info("-" * 60)
     calculator = Calculator()
     db_service = DatabaseService()
+    logger.info("✅ 实例已创建: Calculator, DatabaseService")
     
-    # 创建函数注册表
+    # 3.2 创建函数注册表并注册实例方法
+    logger.info("\n2️⃣ 注册实例方法")
+    logger.info("-" * 60)
     registry = FunctionRegistry()
+    register_instance_methods(registry, calculator, prefix="calc_")
+    register_instance_methods(registry, db_service, prefix="db_")
     
-    # 注册实例方法
-    register_instance_methods(registry, calculator, class_name="Calculator", prefix="calc_")
-    register_instance_methods(registry, db_service, class_name="DatabaseService", prefix="db_")
+    # 查看注册的函数
+    functions = registry.list_functions()
+    logger.info(f"✅ 已注册 {len(functions)} 个函数:")
+    for func in functions:
+        logger.info(f"   - {func['name']}: {func['description']}")
     
-    # 创建 Agent
+    # 3.3 创建 Agent 并测试
+    logger.info("\n3️⃣ 创建 Agent 并进行对话")
+    logger.info("-" * 60)
     provider = create_provider("openai", api_key=api_key, model="gpt-4o-mini")
     agent = Agent(
         provider,
@@ -271,14 +280,7 @@ async def example_instance_methods():
         system_prompt="你是一个计算和数据库查询助手。"
     )
     
-    # 查看注册的函数
-    functions = registry.list_functions()
-    logger.info(f"\n已注册 {len(functions)} 个函数:")
-    for func in functions:
-        logger.info(f"  - {func['name']}: {func['description']}")
-    
-    # 测试函数调用
-    logger.info("\n用户: 计算 12 乘以 8 的结果")
+    logger.info("用户: 计算 12 乘以 8 的结果")
     response = await agent.chat("计算 12 乘以 8 的结果")
     logger.info(f"助手: {response['content']}")
     
@@ -300,21 +302,32 @@ async def example_auto_discover():
         logger.warning("未设置 OPENAI_API_KEY 环境变量，跳过此示例")
         return
     
-    # 创建多个实例
+    # 4.1 创建多个实例
+    logger.info("\n1️⃣ 创建多个实例")
+    logger.info("-" * 60)
     calculator = Calculator()
     db_service = DatabaseService()
+    logger.info("✅ 实例已创建")
     
-    # 创建函数注册表
+    # 4.2 自动发现并注册（使用前缀避免命名冲突）
+    logger.info("\n2️⃣ 自动发现并注册")
+    logger.info("-" * 60)
     registry = FunctionRegistry()
-    
-    # 自动发现并注册（使用前缀避免命名冲突）
     auto_discover_and_register(registry, [
         (calculator, "calc_"),
         (db_service, "db_"),
         (get_weather, ""),  # 使用装饰器标记的函数
     ])
     
-    # 创建 Agent
+    # 查看注册的函数
+    functions = registry.list_functions()
+    logger.info(f"✅ 已注册 {len(functions)} 个函数:")
+    for func in functions:
+        logger.info(f"   - {func['name']}: {func['description']}")
+    
+    # 4.3 创建 Agent 并测试复杂查询
+    logger.info("\n3️⃣ 创建 Agent 并进行复杂查询")
+    logger.info("-" * 60)
     provider = create_provider("openai", api_key=api_key, model="gpt-4o-mini")
     agent = Agent(
         provider,
@@ -322,14 +335,7 @@ async def example_auto_discover():
         system_prompt="你是一个多功能的助手，可以进行计算、查询数据库和获取天气信息。"
     )
     
-    # 查看注册的函数
-    functions = registry.list_functions()
-    logger.info(f"\n已注册 {len(functions)} 个函数:")
-    for func in functions:
-        logger.info(f"  - {func['name']}: {func['description']}")
-    
-    # 测试复杂查询（需要调用多个函数）
-    logger.info("\n用户: 查询顾客1的余额，然后计算余额乘以2的结果")
+    logger.info("用户: 查询顾客1的余额，然后计算余额乘以2的结果")
     response = await agent.chat("查询顾客1的余额，然后计算余额乘以2的结果")
     logger.info(f"助手: {response['content']}")
     logger.info(f"迭代次数: {response['iterations']}")
@@ -349,10 +355,10 @@ async def example_multi_step_function_calling():
         logger.warning("未设置 OPENAI_API_KEY 环境变量，跳过此示例")
         return
     
-    # 创建函数注册表
+    # 5.1 创建函数注册表并注册所有函数
+    logger.info("\n1️⃣ 注册所有函数")
+    logger.info("-" * 60)
     registry = FunctionRegistry()
-    
-    # 注册所有函数
     auto_discover_and_register(registry, [
         get_weather,
         add_numbers,
@@ -361,7 +367,12 @@ async def example_multi_step_function_calling():
         (DatabaseService(), "db_"),
     ])
     
-    # 创建 Agent
+    functions = registry.list_functions()
+    logger.info(f"✅ 已注册 {len(functions)} 个函数")
+    
+    # 5.2 创建 Agent
+    logger.info("\n2️⃣ 创建 Agent")
+    logger.info("-" * 60)
     provider = create_provider("openai", api_key=api_key, model="gpt-4o-mini")
     agent = Agent(
         provider,
@@ -369,12 +380,15 @@ async def example_multi_step_function_calling():
         system_prompt="你是一个智能助手，可以执行复杂的多步骤任务。"
     )
     
-    # 测试复杂的多步骤查询
-    logger.info("\n用户: 查询顾客1的信息，然后获取北京的天气，最后计算顾客余额加上1000")
+    # 5.3 测试复杂的多步骤查询
+    logger.info("\n3️⃣ 执行复杂的多步骤查询")
+    logger.info("-" * 60)
+    logger.info("用户: 查询顾客1的信息，然后获取北京的天气，最后计算顾客余额加上1000")
     response = await agent.chat(
         "查询顾客1的信息，然后获取北京的天气，最后计算顾客余额加上1000",
         max_iterations=10
     )
+    
     logger.info(f"\n助手: {response['content']}")
     logger.info(f"\n执行统计:")
     logger.info(f"  - 迭代次数: {response['iterations']}")
@@ -389,7 +403,7 @@ async def example_multi_step_function_calling():
 async def main():
     """主函数"""
     logger.info("=" * 60)
-    logger.info("Agent 函数调用示例")
+    logger.info("Agent 模块 - 函数调用示例")
     logger.info("=" * 60)
     logger.info("")
     logger.info("提示: 请确保设置了 OPENAI_API_KEY 环境变量")
@@ -404,14 +418,15 @@ async def main():
         await example_multi_step_function_calling()
         
         logger.info("=" * 60)
-        logger.info("示例运行完成！")
+        logger.info("✅ 函数调用示例完成！")
         logger.info("=" * 60)
-        logger.info("\n关键要点:")
-        logger.info("1. 使用 @agent_callable 装饰器可以自动标记函数")
-        logger.info("2. 可以手动注册函数到 FunctionRegistry")
-        logger.info("3. 可以自动注册实例方法、类方法或模块函数")
-        logger.info("4. Agent 会自动处理函数调用和多轮迭代")
-        logger.info("5. 函数调用结果会自动返回给 LLM 进行后续处理")
+        logger.info("")
+        logger.info("💡 关键要点:")
+        logger.info("   1. 使用 @agent_callable 装饰器可以自动标记函数")
+        logger.info("   2. 可以手动注册函数到 FunctionRegistry")
+        logger.info("   3. 可以自动注册实例方法、类方法或模块函数")
+        logger.info("   4. Agent 会自动处理函数调用和多轮迭代")
+        logger.info("   5. 函数调用结果会自动返回给 LLM 进行后续处理")
         
     except Exception as e:
         logger.error(f"运行示例时出错: {e}")
@@ -422,4 +437,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

@@ -1,450 +1,790 @@
-# Agent 技术架构与内容设计
+# Agent 模块设计文档
 
-## 一、技术架构
+## 1. 模块概述
 
-### 1.1 架构概览
+`agent/` 是一个**独立的大语言模型（LLM）调用与函数调用（Function Calling）框架**，采用 **策略模式 + 注册表模式 + 工厂模式**，支持多种 LLM 提供商的无缝切换和统一的函数调用机制。
 
-本系统采用 **分层架构** 和 **策略模式**，提供统一的大语言模型（LLM）调用和函数调用（Function Calling）框架，支持多种 LLM 提供商和灵活的函数注册机制。
+### 设计目标
+
+- **多模型透明切换**：通过策略模式支持 OpenAI、Claude、MiniMax 等多种 LLM 提供商，上层代码无需关心底层实现
+- **函数调用统一管理**：通过注册表模式管理所有可调用函数，支持自动发现和手动注册
+- **多轮对话支持**：正确处理多轮工具调用，通过 `tool_call_id` 和 `provider_extras` 机制保持上下文完整性
+- **模块独立性**：`agent/` 可单独使用，不依赖 `database/`、`business/` 等模块
+
+---
+
+## 2. 架构分层
 
 ```mermaid
 graph TB
-    A[业务层] --> B[Agent 核心层]
-    B --> C[LLM Provider 层]
-    B --> D[Function 层]
-    C --> E[OpenAI Provider]
-    C --> F[Claude Provider]
-    C --> G[Open Source Provider]
-    D --> H[Function Registry<br/>函数注册表]
-    D --> I[Tool Executor<br/>工具执行器]
-    D --> J[Discovery<br/>自动发现机制]
-    H --> K[业务函数]
-    I --> K
+    subgraph "外部调用方"
+        A[main.py]
+        B[business/adapter]
+        C[parsing/pipeline]
+        D[services/*]
+    end
+
+    subgraph "agent/ 模块"
+        E[Agent<br/>对话控制器]
+        
+        subgraph "Providers 层"
+            F[LLMProvider<br/>抽象基类]
+            G[OpenAIProvider]
+            H[AnthropicBaseProvider]
+            I[ClaudeProvider]
+            J[MiniMaxProvider]
+            K[OpenSourceProvider]
+        end
+        
+        subgraph "Functions 层"
+            L[FunctionRegistry<br/>函数注册表]
+            M[ToolExecutor<br/>工具执行器]
+            N[Discovery<br/>自动发现]
+        end
+    end
+
+    subgraph "LLM API"
+        O[OpenAI API]
+        P[Anthropic API]
+        Q[MiniMax API]
+        R[兼容 OpenAI API<br/>的开源模型]
+    end
+
+    A --> E
+    B --> E
+    C --> E
+    D --> E
+
+    E --> F
+    E --> L
+    E --> M
+
+    F --> G
+    F --> H
+    F --> K
     
-    style A fill:#e1f5ff
-    style B fill:#fff4e1
-    style C fill:#ffe1f5
-    style D fill:#ffe1f5
-    style E fill:#e1ffe1
-    style F fill:#e1ffe1
-    style G fill:#e1ffe1
-    style H fill:#f5e1ff
-    style I fill:#f5e1ff
-    style J fill:#f5e1ff
+    H --> I
+    H --> J
+
+    G --> O
+    I --> P
+    J --> Q
+    K --> R
+
+    L --> N
+    M --> L
 ```
 
-### 1.2 技术栈
+---
 
-- **核心框架**: Python 3.8+
-- **异步支持**: asyncio
-- **LLM 提供商**:
-  - OpenAI（GPT 系列）
-  - Anthropic（Claude 系列）
-  - 开源模型（兼容 OpenAI API 格式）
-- **设计模式**: 
-  - 策略模式（Provider 切换）
-  - 注册表模式（Function Registry）
-  - 工厂模式（Provider 创建）
+## 3. 模块文件结构
 
-### 1.3 架构层次说明
-
-#### Agent 核心层（agent.py）
-- **职责**: 整合 LLM 提供商和函数调用机制，提供统一的对话接口
-- **功能**:
-  - 多轮对话管理
-  - 函数调用迭代处理
-  - 对话历史维护
-  - 消息解析和结构化提取
-
-#### LLM Provider 层（providers/）
-- **职责**: 封装不同 LLM 提供商的 API 调用，提供统一接口
-- **功能**:
-  - 统一的聊天接口（`chat` 方法）
-  - 函数调用支持检测
-  - 消息格式转换
-  - 响应结果标准化
-
-#### Function 层（functions/）
-- **职责**: 管理 Agent 可调用的函数，提供注册、发现和执行机制
-- **功能**:
-  - 函数注册和管理（Registry）
-  - 函数执行（Executor）
-  - 自动发现和注册（Discovery）
-
-## 二、核心组件详解
-
-### 2.1 Agent 核心类
-
-**文件**: `agent/agent.py`
-
-**主要功能**:
-1. **对话管理**: 维护完整的对话历史，支持多轮对话
-2. **函数调用迭代**: 自动处理 LLM 的函数调用请求，执行函数并将结果返回给 LLM，支持多轮迭代
-3. **消息解析**: 从非结构化消息中提取结构化数据
-
-**关键方法**:
-- `chat()`: 与 Agent 进行对话，支持函数调用和多轮迭代
-- `parse_message()`: 解析消息并提取结构化数据
-- `register_function()`: 便捷方法，直接注册函数到注册表
-- `clear_history()`: 清空对话历史
-
-**工作流程**:
 ```
-用户消息 → Agent.chat() → LLM Provider → LLM 响应
-                                    ↓
-                           是否包含函数调用？
-                           /              \
-                        是                否
-                        ↓                  ↓
-                执行函数调用          返回最终回复
-                        ↓
-                将结果返回给 LLM
-                        ↓
-                继续迭代（最多 max_iterations 次）
+agent/
+├── __init__.py              # 模块入口，统一导出
+├── agent.py                 # Agent 核心类
+├── providers/               # LLM 提供商层
+│   ├── __init__.py          # 工厂函数 create_provider()
+│   ├── base.py              # LLMProvider 抽象基类、数据类
+│   ├── openai_provider.py   # OpenAI GPT 系列
+│   ├── anthropic_base.py    # Anthropic SDK 共享基类
+│   ├── claude_provider.py   # Claude 系列
+│   ├── minimax_provider.py  # MiniMax 系列
+│   └── open_source_provider.py  # OpenAI API 兼容的开源模型
+└── functions/               # 函数调用层
+    ├── __init__.py
+    ├── registry.py          # FunctionRegistry 函数注册表
+    ├── executor.py          # ToolExecutor 工具执行器
+    └── discovery.py         # 自动发现和注册机制
 ```
 
-### 2.2 LLM Provider 层
+---
 
-**文件**: `agent/providers/`
+## 4. 类关系图
 
-#### 2.2.1 基础接口（base.py）
+```mermaid
+classDiagram
+    class Agent {
+        +provider: LLMProvider
+        +function_registry: FunctionRegistry
+        +tool_executor: ToolExecutor
+        +system_prompt: str
+        +conversation_history: List~LLMMessage~
+        +chat(user_message, max_iterations) Dict
+        +parse_message(sender, timestamp, content) List~Dict~
+        +clear_history()
+        +register_function(name, description, func, parameters)
+    }
 
-定义了所有 Provider 必须实现的抽象接口：
+    class LLMProvider {
+        <<abstract>>
+        +chat(messages, functions, temperature) LLMResponse
+        +supports_function_calling() bool
+        +model_name: str
+    }
 
-- **LLMProvider**: 抽象基类
-  - `chat()`: 发送聊天请求并获取回复
-  - `supports_function_calling()`: 是否支持函数调用
-  - `model_name`: 模型名称属性
+    class OpenAIProvider {
+        +client: OpenAI
+        +_model: str
+    }
 
-- **数据类**:
-  - `LLMMessage`: 消息对象（role, content, name）
-  - `FunctionCall`: 函数调用对象（name, arguments）
-  - `LLMResponse`: LLM 响应对象（content, function_calls, finish_reason）
+    class AnthropicBaseProvider {
+        +client: Anthropic
+        +_model: str
+        +_extract_system(messages) Tuple
+        +_convert_messages(messages) List
+        +_parse_response(response) LLMResponse
+    }
 
-#### 2.2.2 具体实现
+    class ClaudeProvider {
+        +_model: str = "claude-sonnet-4-20250514"
+    }
 
-**OpenAI Provider** (`openai_provider.py`):
-- 支持 OpenAI GPT 系列模型
-- 支持自定义 base_url（兼容 OpenAI API 格式的第三方服务）
-- 使用 OpenAI Python SDK
+    class MiniMaxProvider {
+        +_model: str = "MiniMax-M2.5"
+    }
 
-**Claude Provider** (`claude_provider.py`):
-- 支持 Anthropic Claude 系列模型
-- 使用 Anthropic Python SDK
-- 支持工具使用（tool use）功能
+    class OpenSourceProvider {
+        +client: httpx.AsyncClient
+        +_model: str
+    }
 
-**Open Source Provider** (`open_source_provider.py`):
-- 支持兼容 OpenAI API 格式的开源模型
-- 可配置 base_url、model、api_key
-- 支持自定义超时设置
+    class FunctionRegistry {
+        -_functions: Dict~str, FunctionDefinition~
+        +register(name, description, func, parameters)
+        +get_function(name) FunctionDefinition
+        +has_function(name) bool
+        +list_functions() List~Dict~
+        -_infer_parameters(func) Dict
+    }
 
-#### 2.2.3 Provider 工厂（__init__.py）
+    class FunctionDefinition {
+        +name: str
+        +description: str
+        +parameters: Dict
+        +func: Callable
+    }
 
-提供 `create_provider()` 工厂函数，根据类型字符串创建对应的 Provider 实例：
+    class ToolExecutor {
+        +registry: FunctionRegistry
+        +execute(function_name, arguments) Any
+        +format_result(result) str
+    }
+
+    class LLMMessage {
+        +role: str
+        +content: str
+        +name: Optional~str~
+        +tool_calls: Optional~List~FunctionCall~~
+        +tool_call_id: Optional~str~
+        +provider_extras: Optional~Any~
+    }
+
+    class LLMResponse {
+        +content: str
+        +function_calls: Optional~List~FunctionCall~~
+        +finish_reason: Optional~str~
+        +metadata: Optional~Dict~
+        +raw_response: Optional~Any~
+    }
+
+    class FunctionCall {
+        +name: str
+        +arguments: Dict
+        +id: Optional~str~
+    }
+
+    Agent --> LLMProvider
+    Agent --> FunctionRegistry
+    Agent --> ToolExecutor
+    Agent --> LLMMessage
+
+    LLMProvider <|-- OpenAIProvider
+    LLMProvider <|-- AnthropicBaseProvider
+    LLMProvider <|-- OpenSourceProvider
+
+    AnthropicBaseProvider <|-- ClaudeProvider
+    AnthropicBaseProvider <|-- MiniMaxProvider
+
+    FunctionRegistry --> FunctionDefinition
+    ToolExecutor --> FunctionRegistry
+
+    LLMProvider ..> LLMMessage
+    LLMProvider ..> LLMResponse
+    LLMResponse --> FunctionCall
+    LLMMessage --> FunctionCall
+```
+
+---
+
+## 5. 核心数据类
+
+### 5.1 FunctionCall
+
+```python
+@dataclass
+class FunctionCall:
+    name: str                      # 函数名称
+    arguments: Dict[str, Any]      # 调用参数
+    id: Optional[str] = None       # 调用标识符 (tool_call_id / tool_use_id)
+```
+
+**说明**：`id` 用于在多轮工具调用中关联"调用请求"与"执行结果"。OpenAI 格式为 `call_xxx`，Anthropic 格式为 `toolu_xxx`。
+
+### 5.2 LLMMessage
+
+```python
+@dataclass
+class LLMMessage:
+    role: str                                  # system / user / assistant / tool
+    content: str                               # 文本内容
+    name: Optional[str] = None                 # 函数名 (tool 消息)
+    tool_calls: Optional[List[FunctionCall]]   # 触发的工具调用 (assistant 消息)
+    tool_call_id: Optional[str] = None         # 关联的调用 ID (tool 消息)
+    provider_extras: Optional[Any] = None      # 提供商原始数据 (透传)
+```
+
+**关键字段说明**：
+
+- **tool_calls**：当 assistant 消息触发了工具调用时，记录所有 `FunctionCall` 对象。各 Provider 在下一轮请求时会从此字段重建 API 所需的格式。
+- **tool_call_id**：tool 消息通过此字段引用对应的调用请求，确保 Provider 能正确匹配调用与结果。
+- **provider_extras**：保存提供商原始响应数据（如 Anthropic 的 content blocks，包含 thinking、tool_use 等块）。Agent 将 `LLMResponse.raw_response` 存入此字段，下一轮请求时 Provider 从中恢复完整上下文，**无需任何缓存或状态管理**。
+
+### 5.3 LLMResponse
+
+```python
+@dataclass
+class LLMResponse:
+    content: str                               # 文本回复
+    function_calls: Optional[List[FunctionCall]] # 函数调用列表
+    finish_reason: Optional[str] = None        # 完成原因
+    metadata: Optional[Dict[str, Any]] = None  # 元数据 (thinking, usage 等)
+    raw_response: Optional[Any] = None         # 原始响应 → provider_extras
+```
+
+---
+
+## 6. Provider 层设计
+
+### 6.1 继承体系
+
+```mermaid
+graph TB
+    A[LLMProvider<br/>抽象基类] --> B[OpenAIProvider]
+    A --> C[AnthropicBaseProvider<br/>共享基类]
+    A --> D[OpenSourceProvider]
+    
+    C --> E[ClaudeProvider]
+    C --> F[MiniMaxProvider]
+    
+    style A fill:#e1f5fe
+    style C fill:#fff3e0
+    style B fill:#e8f5e9
+    style D fill:#e8f5e9
+    style E fill:#f3e5f5
+    style F fill:#f3e5f5
+```
+
+### 6.2 抽象接口
+
+所有 Provider 必须实现以下三个方法：
+
+```python
+class LLMProvider(ABC):
+    @abstractmethod
+    async def chat(
+        self,
+        messages: List[LLMMessage],
+        functions: Optional[List[Dict[str, Any]]] = None,
+        temperature: float = 0.1,
+        **kwargs: Any
+    ) -> LLMResponse: ...
+    
+    @abstractmethod
+    def supports_function_calling(self) -> bool: ...
+    
+    @property
+    @abstractmethod
+    def model_name(self) -> str: ...
+```
+
+**职责**：
+1. 将 `LLMMessage` 列表转换为 API 所需格式
+2. 调用 LLM API
+3. 将响应转换为统一的 `LLMResponse`
+
+### 6.3 OpenAIProvider
+
+- **SDK**：`openai` Python SDK（同步 `client.chat.completions.create`）
+- **消息转换**：
+  - `assistant + tool_calls` → 重建 OpenAI `tool_calls` 结构（含 `id`, `type`, `function`）
+  - `tool / function` → `role="tool"` + `tool_call_id`
+- **函数定义**：转为 `tools` 格式 `[{"type": "function", "function": {...}}]`
+- **支持 base_url**：可接入兼容 OpenAI API 的第三方服务
+
+### 6.4 AnthropicBaseProvider（共享基类）
+
+为 Claude 和 MiniMax 提供统一的消息转换与响应解析：
+
+- **System 消息**：Anthropic 要求单独传递，基类自动提取
+- **消息转换**：
+  - `assistant + provider_extras` → 使用原始 content blocks（保留 thinking / tool_use）
+  - `assistant` 无 extras → 纯文本 content
+  - `tool / function` → `tool_result` 格式，打包到 `user` role
+- **函数定义**：使用 `input_schema` 替代 `parameters`
+- **响应解析**：
+  - `text` 块 → `content`
+  - `thinking` 块 → `metadata["thinking"]`（Interleaved Thinking）
+  - `tool_use` 块 → `FunctionCall`（保留 `id`）
+  - 原始 content blocks → `raw_response`（供下轮透传）
+- **Token 使用**：自动解析 `usage` 信息（含缓存统计）
+
+### 6.5 ClaudeProvider
+
+继承 `AnthropicBaseProvider`，仅设置默认参数：
+- 默认模型：`claude-sonnet-4-20250514`
+- 默认 max_tokens：`2048`
+- 默认 base_url：Anthropic 官方
+
+### 6.6 MiniMaxProvider
+
+继承 `AnthropicBaseProvider`，通过 Anthropic 兼容接口调用 MiniMax 模型：
+- 默认模型：`MiniMax-M2.5`
+- 默认 max_tokens：`4096`
+- 默认 base_url：`https://api.minimaxi.com/anthropic`（国内）
+- 国际 base_url：`https://api.minimax.io/anthropic`
+- 支持 Interleaved Thinking（交错思维链）
+- 支持 Prompt 缓存
+
+**支持的模型**：MiniMax-M2.5, MiniMax-M2.5-highspeed, MiniMax-M2.1, MiniMax-M2.1-highspeed, MiniMax-M2
+
+### 6.7 OpenSourceProvider
+
+- **HTTP 客户端**：`httpx.AsyncClient`
+- **消息转换**：与 OpenAIProvider 一致
+- **支持配置**：`base_url`, `model`, `api_key`, `timeout`
+- **适用部署**：vLLM, Ollama, LocalAI 等兼容 OpenAI API 的服务
+
+### 6.8 工厂函数
 
 ```python
 provider = create_provider("openai", api_key="sk-...", model="gpt-4o-mini")
-provider = create_provider("claude", api_key="sk-ant-...", model="claude-3")
+provider = create_provider("claude", api_key="sk-ant-...")
+provider = create_provider("minimax", api_key="sk-api-...", model="MiniMax-M2.5")
 provider = create_provider("open_source", base_url="http://localhost:8000/v1", model="qwen")
 ```
 
-### 2.3 Function 层
+---
 
-**文件**: `agent/functions/`
+## 7. Functions 层设计
 
-#### 2.3.1 函数注册表（registry.py）
+### 7.1 FunctionRegistry（注册表）
 
-**FunctionRegistry 类**:
-- **职责**: 管理所有可被 Agent 调用的函数
-- **功能**:
-  - 注册函数及其元数据（名称、描述、参数 Schema）
-  - 根据函数签名自动推断参数类型
-  - 提供函数列表供 LLM function calling 使用
+管理所有可被 Agent 调用的函数。每个函数注册为 `FunctionDefinition`：
 
-**关键方法**:
-- `register()`: 注册函数到注册表
-- `list_functions()`: 列出所有已注册的函数（LLM function calling 格式）
-- `get_function()`: 根据名称获取函数定义
-- `has_function()`: 检查函数是否已注册
-
-**自动类型推断**:
-- 支持基本 Python 类型（str, int, float, bool, list, dict）
-- 支持 Optional/Union 类型
-- 生成符合 JSON Schema 规范的参数定义
-
-#### 2.3.2 工具执行器（executor.py）
-
-**ToolExecutor 类**:
-- **职责**: 执行 Agent 通过 function calling 调用的函数
-- **功能**:
-  - 从注册表中查找函数
-  - 执行函数调用（支持同步和异步函数）
-  - 格式化函数执行结果为字符串
-
-**关键方法**:
-- `execute()`: 执行函数调用，自动处理同步/异步函数
-- `format_result()`: 格式化函数执行结果为字符串（JSON 格式）
-
-#### 2.3.3 自动发现机制（discovery.py）
-
-提供多种方式自动发现和注册函数：
-
-1. **装饰器方式** (`@agent_callable`):
-   ```python
-   @agent_callable(description="查询顾客信息")
-   def get_customer(name: str) -> dict:
-       ...
-   ```
-
-2. **实例方法注册** (`register_instance_methods`):
-   ```python
-   register_instance_methods(registry, db_repo, prefix="db_")
-   ```
-
-3. **模块函数注册** (`register_module_functions`):
-   ```python
-   register_module_functions(registry, repo_module, prefix="repo_")
-   ```
-
-4. **类方法注册** (`register_class_methods`):
-   ```python
-   register_class_methods(registry, DatabaseRepository, prefix="db_", instance=db_repo)
-   ```
-
-5. **自动发现** (`auto_discover_and_register`):
-   ```python
-   auto_discover_and_register(registry, [db_repo, membership_svc])
-   ```
-
-**特性**:
-- 自动识别对象类型（模块、类、实例）
-- 支持函数名前缀
-- 支持过滤函数
-- 优先使用装饰器配置
-
-## 三、数据流设计
-
-### 3.1 对话流程
-
-```
-1. 用户发送消息
-   ↓
-2. Agent.chat() 接收消息，添加到对话历史
-   ↓
-3. 准备函数定义列表（如果有注册函数）
-   ↓
-4. 调用 LLM Provider.chat()
-   ↓
-5. LLM 返回响应（可能包含函数调用）
-   ↓
-6. 判断是否有函数调用？
-   ├─ 否 → 返回最终回复
-   └─ 是 → 执行函数调用
-       ↓
-   7. ToolExecutor.execute() 执行函数
-       ↓
-   8. 格式化函数结果
-       ↓
-   9. 将结果添加到对话历史（role="function"）
-       ↓
-   10. 回到步骤 4，继续迭代
-       （最多 max_iterations 次）
+```python
+@dataclass
+class FunctionDefinition:
+    name: str                    # 唯一标识名
+    description: str             # LLM 可读描述
+    parameters: Dict[str, Any]   # JSON Schema 格式参数定义
+    func: Callable               # 实际函数对象
 ```
 
-### 3.2 函数调用流程
+**核心方法**：
+- `register(name, description, func, parameters=None)` — 注册函数（parameters 为 None 时自动推断）
+- `get_function(name)` → `Optional[FunctionDefinition]`
+- `has_function(name)` → `bool`
+- `list_functions()` → `List[Dict]`（LLM function calling 格式）
 
-```
-1. LLM 决定调用函数
-   ↓
-2. LLM 返回 FunctionCall 对象列表
-   ↓
-3. Agent 遍历每个函数调用
-   ↓
-4. ToolExecutor.execute() 查找函数
-   ├─ 从 FunctionRegistry 获取函数定义
-   ├─ 使用参数调用函数
-   └─ 处理同步/异步函数
-   ↓
-5. 格式化执行结果
-   ↓
-6. 添加到对话历史（role="function"）
-   ↓
-7. LLM 基于函数结果继续处理
+**自动类型推断**：分析函数签名的类型注解，生成 JSON Schema：
+- `str` → `"string"`, `int` → `"integer"`, `float` → `"number"`, `bool` → `"boolean"`, `list` → `"array"`, `dict` → `"object"`
+- 支持 `Optional[T]` / `Union[T, None]`
+- 有默认值的参数不加入 `required`
+
+### 7.2 ToolExecutor（执行器）
+
+```python
+class ToolExecutor:
+    async def execute(self, function_name, arguments) -> Any
+    def format_result(self, result) -> str
 ```
 
-### 3.3 函数注册流程
+- 从注册表查找函数并执行（自动处理同步/异步）
+- 格式化结果：`None` → `"执行成功"`，`dict/list` → JSON 字符串，其他 → `str()`
 
+### 7.3 Discovery（自动发现）
+
+提供多种自动注册方式：
+
+| 方式 | 函数 | 说明 |
+|------|------|------|
+| 装饰器 | `@agent_callable(name, description, parameters)` | 标记函数为可调用 |
+| 实例方法 | `register_instance_methods(registry, instance, prefix)` | 注册对象所有公共方法 |
+| 模块函数 | `register_module_functions(registry, module, prefix, filter_func)` | 注册模块所有公共函数 |
+| 类方法 | `register_class_methods(registry, cls, prefix, instance)` | 注册类所有公共方法 |
+| 自动发现 | `auto_discover_and_register(registry, targets)` | 自动识别类型并注册 |
+
+**注册规则**：
+- 跳过以 `_` 开头的私有方法/函数
+- 跳过 `__xxx__` 特殊方法
+- 跳过 `get_session`, `create_tables` 等内部方法
+- 已用 `@agent_callable` 标记的优先使用装饰器配置
+
+---
+
+## 8. Agent 核心类
+
+### 8.1 初始化
+
+```python
+agent = Agent(
+    provider: LLMProvider,                    # 必需：LLM 提供商
+    function_registry: Optional[FunctionRegistry],  # 可选：函数注册表
+    system_prompt: Optional[str],             # 可选：系统提示词
+)
 ```
-1. 开发者定义函数或方法
-   ↓
-2. 选择注册方式：
-   ├─ 使用 @agent_callable 装饰器
-   ├─ 调用 register_instance_methods()
-   ├─ 调用 register_module_functions()
-   ├─ 调用 register_class_methods()
-   └─ 调用 auto_discover_and_register()
-   ↓
-3. 自动推断参数类型（如果未提供）
-   ↓
-4. 注册到 FunctionRegistry
-   ↓
-5. 函数可用于 LLM function calling
+
+初始化时自动创建 `ToolExecutor`，如有 `system_prompt` 则添加到 `conversation_history`。
+
+### 8.2 对话流程 (chat)
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Agent as Agent
+    participant Provider as LLMProvider
+    participant Registry as FunctionRegistry
+    participant Executor as ToolExecutor
+
+    User->>Agent: chat(user_message)
+    Agent->>Agent: 添加 user 消息到历史
+    
+    loop 最多 max_iterations 轮
+        Agent->>Registry: list_functions()
+        Registry-->>Agent: functions[]
+        
+        Agent->>Provider: chat(messages, functions)
+        Provider-->>Agent: LLMResponse
+        
+        Agent->>Agent: 存储 assistant 消息<br/>(含 tool_calls + provider_extras)
+        
+        alt 无函数调用
+            Agent-->>User: 返回最终回复
+        else 有函数调用
+            loop 每个 function_call
+                Agent->>Executor: execute(name, arguments)
+                Executor->>Registry: get_function(name)
+                Registry-->>Executor: FunctionDefinition
+                Executor->>Executor: 执行函数
+                Executor-->>Agent: result
+                Agent->>Executor: format_result(result)
+                Executor-->>Agent: result_str
+                Agent->>Agent: 存储 tool 消息<br/>(含 tool_call_id)
+            end
+            Note over Agent: 继续循环，让 LLM 基于结果继续处理
+        end
+    end
 ```
 
-## 四、关键设计决策
+**返回值**：
+```python
+{
+    "content": str,                    # 最终回复
+    "function_calls": List[Dict],      # 所有函数调用记录
+    "iterations": int                  # 实际迭代次数
+}
+```
 
-### 4.1 为什么使用抽象基类？
+### 8.3 消息解析 (parse_message)
 
-- **统一接口**: 不同 LLM 提供商有不同的 API 格式，通过抽象基类统一接口
-- **易于扩展**: 添加新的 LLM 提供商只需实现 LLMProvider 接口
-- **类型安全**: 使用类型注解和抽象方法，提供更好的 IDE 支持和类型检查
+```python
+records = await agent.parse_message(sender, timestamp, content)
+```
 
-### 4.2 为什么分离 Registry 和 Executor？
+从非结构化消息提取结构化数据（JSON 数组）。自动处理 Markdown code block 包裹。
 
-- **职责分离**: Registry 负责管理，Executor 负责执行
-- **灵活性**: 可以独立扩展注册机制和执行逻辑
-- **可测试性**: 可以单独测试注册和执行功能
+### 8.4 辅助方法
 
-### 4.3 为什么支持自动发现？
+- `clear_history()` — 清空对话历史，保留系统提示词
+- `register_function(name, description, func, parameters)` — 便捷注册函数
 
-- **开发效率**: 减少手动注册的代码量
-- **维护性**: 新增函数自动可用，无需修改注册代码
-- **灵活性**: 支持多种注册方式，适应不同场景
+---
 
-### 4.4 为什么支持多轮迭代？
+## 9. 多轮工具调用的关键设计
 
-- **复杂任务**: 某些任务需要多次函数调用才能完成
-- **上下文理解**: LLM 可以基于前一次函数调用的结果决定下一步操作
-- **灵活性**: 支持链式函数调用，实现复杂业务逻辑
+### 9.1 tool_call_id 跟踪
 
-## 五、使用示例
+多轮工具调用的正确性依赖于 ID 的精确跟踪：
 
-### 5.1 基础使用
+```mermaid
+sequenceDiagram
+    participant LLM as LLM
+    participant Agent as Agent
+    participant Executor as ToolExecutor
+
+    Note over LLM,Executor: Round 1
+    LLM->>Agent: FunctionCall(name="get_weather", id="call_123")
+    Agent->>Executor: execute("get_weather", {...})
+    Executor-->>Agent: result
+    Agent->>Agent: tool message(tool_call_id="call_123", content=result)
+    
+    Note over LLM,Executor: Round 2
+    Agent->>LLM: 发送完整历史（含 tool message）
+    LLM->>Agent: 基于结果继续处理或调用更多函数
+```
+
+**OpenAI 格式**：assistant 消息的 `tool_calls[].id` 与 tool 消息的 `tool_call_id` 匹配。
+**Anthropic 格式**：`tool_use` 块的 `id` 与 `tool_result` 的 `tool_use_id` 匹配。
+
+### 9.2 provider_extras 透传机制
+
+Anthropic 系列 Provider 的多轮工具调用需要保持完整的 content blocks 上下文：
+
+```mermaid
+flowchart LR
+    A[Round 1 响应] --> B[content blocks:<br/>thinking + text + tool_use]
+    B --> C[raw_response = content blocks]
+    C --> D[assistant_msg.provider_extras = raw_response]
+    D --> E[Round 2 请求]
+    E --> F[从 provider_extras 恢复<br/>完整 content blocks]
+    F --> G[Provider 发送完整上下文<br/>给 Anthropic API]
+    
+    style A fill:#e1f5fe
+    style D fill:#fff3e0
+    style G fill:#e8f5e9
+```
+
+这种设计避免了在 Provider 层维护复杂的缓存/队列状态。
+
+---
+
+## 10. 数据流
+
+### 10.1 完整对话流程
+
+```mermaid
+flowchart TB
+    A[用户消息] --> B[Agent.chat]
+    B --> C{准备函数定义}
+    C -->|有注册函数| D[FunctionRegistry.list_functions]
+    C -->|无函数| E[functions = None]
+    D --> F[Provider.chat]
+    E --> F
+    F --> G{LLM 响应}
+    G -->|有函数调用| H[ToolExecutor.execute]
+    G -->|无函数调用| I[返回最终回复]
+    H --> J[FunctionRegistry.get_function]
+    J --> K[执行函数]
+    K --> L[格式化结果]
+    L --> M[添加 tool 消息到历史]
+    M --> C
+    I --> N[返回结果]
+    
+    style A fill:#e1f5fe
+    style I fill:#e8f5e9
+    style N fill:#fff3e0
+```
+
+### 10.2 消息格式转换流程
+
+```mermaid
+flowchart LR
+    A[LLMMessage 列表] --> B{Provider 类型}
+    B -->|OpenAI| C[转换为 OpenAI 格式]
+    B -->|Anthropic| D[提取 system<br/>转换为 content blocks]
+    B -->|OpenSource| C
+    
+    C --> E[调用 API]
+    D --> E
+    
+    E --> F[API 响应]
+    F --> G{Provider 类型}
+    G -->|OpenAI| H[解析为 LLMResponse]
+    G -->|Anthropic| I[解析 content blocks<br/>提取 thinking/tool_use]
+    G -->|OpenSource| H
+    
+    H --> J[返回 LLMResponse]
+    I --> J
+    
+    style A fill:#e1f5fe
+    style J fill:#e8f5e9
+```
+
+---
+
+## 11. 使用示例
+
+### 11.1 基础对话
+
+```python
+from agent import Agent, create_provider
+
+provider = create_provider("minimax", api_key="sk-api-...", model="MiniMax-M2.5")
+agent = Agent(provider, system_prompt="你是一个友好的助手")
+
+response = await agent.chat("你好")
+print(response["content"])
+```
+
+### 11.2 带函数调用
 
 ```python
 from agent import Agent, create_provider, FunctionRegistry
 
-# 创建 LLM 提供商
-provider = create_provider("openai", api_key="sk-...", model="gpt-4o-mini")
-
-# 创建函数注册表
+provider = create_provider("minimax", api_key="sk-api-...")
 registry = FunctionRegistry()
 
-# 创建 Agent
-agent = Agent(provider, registry, system_prompt="你是一个有用的助手")
+def get_weather(city: str) -> dict:
+    return {"city": city, "temperature": 22, "condition": "晴天"}
 
-# 与 Agent 对话
-response = await agent.chat("查询用户信息")
-print(response["content"])
+registry.register("get_weather", "获取城市天气信息", get_weather)
+
+agent = Agent(provider, function_registry=registry, system_prompt="你是天气助手")
+response = await agent.chat("北京今天天气怎么样？")
+# Agent 自动调用 get_weather("北京") 并基于结果回复
 ```
 
-### 5.2 注册函数
+### 11.3 自动注册数据库方法
 
 ```python
-# 方式 1: 使用装饰器
+from agent.functions.discovery import register_instance_methods
+
+db = DatabaseManager("sqlite:///data/store.db")
+register_instance_methods(registry, db, prefix="db_")
+# 自动注册: db_get_daily_records, db_get_customer_info, db_save_service_record 等
+```
+
+### 11.4 使用装饰器标记函数
+
+```python
+from agent.functions.discovery import agent_callable
+
 @agent_callable(description="查询顾客信息")
 def get_customer(name: str) -> dict:
-    return {"name": name, "id": 123}
+    """根据名称查询顾客信息。"""
+    # ...
+    return customer_data
 
-# 方式 2: 手动注册
-registry.register(
-    name="get_customer",
-    description="查询顾客信息",
-    func=get_customer
-)
-
-# 方式 3: 自动注册实例方法
-from db.repository import DatabaseRepository
-db_repo = DatabaseRepository()
-register_instance_methods(registry, db_repo, prefix="db_")
+# 自动注册
+auto_discover_and_register(registry, [get_customer])
 ```
 
-### 5.3 多轮对话和函数调用
+### 11.5 切换 Provider
 
 ```python
-# Agent 会自动处理函数调用
-response = await agent.chat("查询张三的会员信息，然后计算他的积分")
-
-# Agent 会：
-# 1. 调用 db_get_customer(name="张三")
-# 2. 基于结果调用 membership_get_points(customer_id=...)
-# 3. 返回最终回复
-```
-
-### 5.4 切换 LLM 提供商
-
-```python
-# 使用 OpenAI
+# 只需更换 Provider，Agent 代码无需修改
 provider = create_provider("openai", api_key="sk-...", model="gpt-4o-mini")
-
-# 切换到 Claude
-provider = create_provider("claude", api_key="sk-ant-...", model="claude-3")
-
-# 切换到开源模型
-provider = create_provider(
-    "open_source",
-    base_url="http://localhost:8000/v1",
-    model="qwen"
-)
-
-# Agent 无需修改，直接使用新的 provider
-agent = Agent(provider, registry)
+provider = create_provider("claude", api_key="sk-ant-...")
+provider = create_provider("minimax", api_key="sk-api-...")
+provider = create_provider("open_source", base_url="http://localhost:8000/v1", model="qwen")
 ```
 
-## 六、扩展指南
+---
 
-### 6.1 添加新的 LLM Provider
+## 12. 扩展指南
 
-1. 在 `agent/providers/` 目录创建新文件
-2. 继承 `LLMProvider` 抽象基类
-3. 实现 `chat()`、`supports_function_calling()` 和 `model_name` 属性
-4. 在 `__init__.py` 的 `create_provider()` 函数中添加新类型
+### 12.1 添加新 Provider
 
-### 6.2 自定义函数注册策略
+1. 在 `agent/providers/` 创建新文件
+2. 继承 `LLMProvider`（或 `AnthropicBaseProvider`）
+3. 实现 `chat()`, `supports_function_calling()`, `model_name`
+4. 在 `providers/__init__.py` 的 `create_provider()` 中注册
 
-1. 实现自定义的注册函数（参考 `discovery.py`）
-2. 或扩展 `FunctionRegistry` 类添加新的注册方法
-3. 使用 `naming_strategy` 参数自定义函数命名
+**示例**：
+```python
+class MyProvider(LLMProvider):
+    def __init__(self, api_key: str, model: str = "my-model"):
+        self._api_key = api_key
+        self._model = model
+    
+    @property
+    def model_name(self) -> str:
+        return self._model
+    
+    def supports_function_calling(self) -> bool:
+        return True
+    
+    async def chat(self, messages, functions=None, **kwargs):
+        # 1. 转换消息格式
+        # 2. 调用 API
+        # 3. 解析响应为 LLMResponse
+        pass
+```
 
-### 6.3 扩展函数执行逻辑
+### 12.2 自定义函数注册
 
-1. 继承 `ToolExecutor` 类
-2. 重写 `execute()` 或 `format_result()` 方法
-3. 在创建 Agent 时使用自定义的 Executor
+```python
+# 使用装饰器
+@agent_callable(description="查询顾客信息")
+def get_customer(name: str) -> dict: ...
 
-## 七、注意事项
+# 批量自动注册
+auto_discover_and_register(registry, [
+    (db_manager, "db_"),
+    (membership_service, "member_"),
+])
+```
 
-### 7.1 函数调用限制
+---
 
-- 最大迭代次数：默认 10 次，可通过 `max_iterations` 参数调整
-- 函数执行错误：会被捕获并作为 function 消息添加到对话历史
-- 函数不存在：会抛出 ValueError 异常
+## 13. 设计决策记录
 
-### 7.2 类型推断限制
+### Q1: 为什么使用策略模式而非直接调用不同 SDK？
 
-- 只支持基本 Python 类型，复杂类型可能被推断为 "string"
-- 建议手动提供 `parameters` 参数以获得更精确的类型定义
-- Optional[T] 类型会被正确处理
+**决策**：通过 `LLMProvider` 抽象接口统一所有 LLM 调用。
 
-### 7.3 异步支持
+**理由**：
+- 上层代码（Agent）无需关心底层使用的是哪个 SDK
+- 切换模型只需更换 Provider，无需修改业务代码
+- 新模型接入只需实现接口，不影响现有代码
 
-- Agent 的所有方法都是异步的，需要使用 `await` 调用
-- 函数可以是同步或异步的，执行器会自动处理
-- LLM Provider 的 `chat()` 方法必须是异步的
+### Q2: 为什么 `provider_extras` 机制是必要的？
 
-### 7.4 对话历史管理
+**决策**：通过 `provider_extras` 字段透传提供商原始数据，而非在 Provider 层维护状态。
 
-- 对话历史会一直累积，直到调用 `clear_history()`
-- 系统提示词会在清空历史后自动恢复
-- 大量对话历史可能影响 LLM 的响应速度和成本
+**理由**：
+- Anthropic 系列需要保持完整的 content blocks（thinking、tool_use 等）
+- Agent 层统一管理对话历史，Provider 层保持无状态
+- 避免在 Provider 层维护复杂的缓存/队列，降低复杂度
 
-## 八、总结
+### Q3: 为什么 FunctionRegistry 支持自动类型推断？
 
-Agent 模块提供了一个完整、灵活、可扩展的大语言模型调用和函数调用框架。通过分层架构和策略模式，实现了：
+**决策**：`register()` 方法在 `parameters=None` 时自动从函数签名推断参数类型。
 
-1. **统一接口**: 不同 LLM 提供商可以无缝切换
-2. **灵活注册**: 支持多种函数注册方式，适应不同开发场景
-3. **自动迭代**: 支持多轮函数调用，处理复杂业务逻辑
-4. **易于扩展**: 清晰的抽象和接口设计，便于添加新功能
+**理由**：
+- 简化函数注册流程，无需手动编写 JSON Schema
+- 支持基本类型（str、int、float、bool、list、dict）和 Optional
+- 复杂场景仍可手动提供 `parameters`，保持灵活性
 
-该架构设计既保证了系统的灵活性和可扩展性，又提供了良好的开发体验和使用便利性。
+### Q4: 为什么 ToolExecutor 自动处理同步/异步函数？
 
+**决策**：`execute()` 方法自动检测函数是否为协程，统一处理同步和异步函数。
+
+**理由**：
+- 简化函数注册，无需区分同步/异步
+- 支持混合使用同步和异步函数
+- 自动等待异步函数完成，对调用方透明
+
+---
+
+## 14. 技术栈
+
+| 分类 | 技术 |
+|------|------|
+| 语言 | Python 3.8+, asyncio |
+| LLM SDK | `openai` (OpenAI / OpenSource), `anthropic` (Claude / MiniMax) |
+| HTTP | `httpx` (OpenSourceProvider) |
+| 日志 | `loguru` |
+| 设计模式 | 策略模式、注册表模式、工厂模式、门面模式 |
+
+---
+
+## 15. 注意事项
+
+1. **异步调用**：Agent 所有方法都是异步的，需用 `await` 调用
+2. **迭代限制**：默认最大 10 轮迭代，可通过 `max_iterations` 调整
+3. **错误处理**：函数执行错误会被捕获并以 tool 消息形式返回给 LLM
+4. **历史管理**：对话历史持续累积，需适时调用 `clear_history()`
+5. **类型推断**：自动推断仅支持基本类型，复杂场景建议手动提供 `parameters`
+6. **Provider 透明**：上层代码无需关心使用哪个 Provider，切换只需改 `create_provider()` 参数

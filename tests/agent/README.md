@@ -123,7 +123,12 @@ pytest tests/agent/test_providers.py::TestOpenSourceProvider::test_chat_real_api
 2. **真实 API 测试是可选的**：只有明确设置环境变量时才会进行真实 API 调用
 3. **真实 API 测试可能产生费用**：使用真实 API 时请注意费用
 4. **网络要求**：真实 API 测试需要网络连接
-5. **API Key 安全**：不要将 API Key 提交到版本控制系统
+5. **API Key 安全**：
+   - ⚠️ **重要**：永远不要将真实的 API Key 硬编码在代码中
+   - 所有 API Key 必须通过环境变量提供（使用 `export` 或 `.env` 文件）
+   - 不要将包含真实密钥的 `.env` 文件提交到版本控制系统
+   - 确保 `.gitignore` 中包含 `.env` 和 `config.ini`
+   - 如果密钥已泄露，请立即在服务提供商处撤销并重新生成
 
 ## 示例：运行完整测试套件
 

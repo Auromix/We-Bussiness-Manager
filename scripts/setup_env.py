@@ -40,7 +40,7 @@ CONFIG_ITEMS = [
 def main():
     print()
     print("=" * 60)
-    print("  We-Business-Manager 配置向导")
+    print("  BizBot 配置向导")
     print("  生成 .env 配置文件")
     print("=" * 60)
     print()
@@ -56,7 +56,7 @@ def main():
 
     # 收集配置
     env_lines = []
-    env_lines.append("# We-Business-Manager 配置文件")
+    env_lines.append("# BizBot 配置文件")
     env_lines.append("# 由 scripts/setup_env.py 自动生成")
     env_lines.append("")
 

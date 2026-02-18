@@ -1,119 +1,256 @@
-# 贡献指南
+# Contributing Guide | 贡献指南
 
-感谢您对 We-Business-Manager 项目的关注！我们欢迎所有形式的贡献。
+[English](#english) | [中文](#中文)
 
-## 如何贡献
+---
+
+## English
+
+Thank you for your interest in **BizBot**! We welcome all forms of contributions — bug reports, feature requests, documentation improvements, and code contributions.
+
+### Getting Started
+
+1. **Fork & Clone**
+
+```bash
+git clone https://github.com/<your-username>/BizBot.git
+cd BizBot
+```
+
+2. **Create a Virtual Environment**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Linux / macOS
+# .venv\Scripts\activate    # Windows
+```
+
+3. **Install in Development Mode**
+
+```bash
+pip install -e ".[all,dev]"
+```
+
+This installs the package in editable mode with all optional dependencies (web, scheduler) and development tools (pytest, black, isort, mypy).
+
+4. **Set Up Environment**
+
+```bash
+cp .env.example .env
+# Edit .env and fill in your API keys
+```
+
+5. **Verify Installation**
+
+```bash
+pytest tests/ -v
+```
+
+### Making Changes
+
+1. **Create a Branch**
+
+```bash
+git checkout -b feature/your-feature-name
+# or
+git checkout -b fix/your-bug-fix
+```
+
+2. **Code Style**
+
+We follow [PEP 8](https://peps.python.org/pep-0008/) with a line length of 100 characters.
+
+```bash
+# Format code
+black .
+isort .
+
+# Type checking (optional)
+mypy agent/ database/
+```
+
+3. **Write Tests**
+
+- New features should include test cases.
+- Tests go in the `tests/` directory, mirroring the source structure.
+- Run tests with:
+
+```bash
+pytest tests/ -v
+pytest tests/database/ -v    # Run specific module tests
+pytest tests/agent/ -v
+```
+
+4. **Commit Messages**
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+| Prefix     | Description          |
+|------------|----------------------|
+| `feat:`    | New feature          |
+| `fix:`     | Bug fix              |
+| `docs:`    | Documentation update |
+| `style:`   | Code formatting      |
+| `refactor:`| Code refactoring     |
+| `test:`    | Test-related changes |
+| `chore:`   | Build/tooling        |
+
+```bash
+git add .
+git commit -m "feat: add membership expiry notification"
+```
+
+5. **Push & Create Pull Request**
+
+```bash
+git push origin feature/your-feature-name
+```
+
+Then open a Pull Request on GitHub.
+
+### Pull Request Checklist
+
+- [ ] Code follows the project style guide
+- [ ] Self-reviewed the code
+- [ ] Added/updated tests as needed
+- [ ] All tests pass locally
+- [ ] Updated documentation if applicable
+
+### Reporting Issues
+
+Before creating an issue:
+1. Check if a similar issue already exists
+2. Provide clear reproduction steps
+3. Include environment info (Python version, OS, etc.)
+
+---
+
+## 中文
+
+感谢您对 **BizBot** 项目的关注！我们欢迎所有形式的贡献——Bug 报告、功能建议、文档改进和代码贡献。
+
+### 快速开始
+
+1. **Fork & 克隆**
+
+```bash
+git clone https://github.com/<your-username>/BizBot.git
+cd BizBot
+```
+
+2. **创建虚拟环境**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Linux / macOS
+# .venv\Scripts\activate    # Windows
+```
+
+3. **以开发模式安装**
+
+```bash
+pip install -e ".[all,dev]"
+```
+
+这会以可编辑模式安装包，包含所有可选依赖（web、scheduler）和开发工具（pytest、black、isort、mypy）。
+
+4. **配置环境**
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入你的 API Key
+```
+
+5. **验证安装**
+
+```bash
+pytest tests/ -v
+```
+
+### 开发流程
+
+1. **创建分支**
+
+```bash
+git checkout -b feature/your-feature-name
+# 或
+git checkout -b fix/your-bug-fix
+```
+
+2. **代码规范**
+
+遵循 [PEP 8](https://peps.python.org/pep-0008/) 代码风格，行长度不超过 100 字符。
+
+```bash
+# 格式化代码
+black .
+isort .
+
+# 类型检查（可选）
+mypy agent/ database/
+```
+
+3. **编写测试**
+
+- 新功能需要包含相应的测试用例
+- 测试文件放在 `tests/` 目录中
+- 运行测试：
+
+```bash
+pytest tests/ -v
+pytest tests/database/ -v    # 运行特定模块测试
+pytest tests/agent/ -v
+```
+
+4. **提交信息**
+
+遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
+
+| 前缀       | 说明           |
+|------------|----------------|
+| `feat:`    | 新功能         |
+| `fix:`     | 修复 Bug       |
+| `docs:`    | 文档更新       |
+| `style:`   | 代码格式调整   |
+| `refactor:`| 代码重构       |
+| `test:`    | 测试相关       |
+| `chore:`   | 构建/工具相关  |
+
+```bash
+git add .
+git commit -m "feat: 添加会员到期提醒功能"
+```
+
+5. **推送并创建 Pull Request**
+
+```bash
+git push origin feature/your-feature-name
+```
+
+然后在 GitHub 上创建 Pull Request。
+
+### PR 检查清单
+
+- [ ] 代码遵循项目代码风格
+- [ ] 已进行自我代码审查
+- [ ] 已添加/更新相关测试
+- [ ] 本地所有测试通过
+- [ ] 如有需要，已更新文档
 
 ### 报告问题
 
-如果您发现了 bug 或有功能建议，请通过 [GitHub Issues](https://github.com/yourusername/We-Bussiness-Manager/issues) 提交。
-
-在提交 issue 之前，请：
-1. 检查是否已有类似的 issue
+提交 Issue 之前，请：
+1. 检查是否已有类似的 Issue
 2. 提供清晰的问题描述和复现步骤
 3. 包含相关的环境信息（Python 版本、操作系统等）
 
-### 提交代码
+---
 
-1. **Fork 项目**
-   ```bash
-   git clone https://github.com/yourusername/We-Bussiness-Manager.git
-   cd We-Bussiness-Manager
-   ```
+## Getting Help | 获取帮助
 
-2. **创建分支**
-   ```bash
-   git checkout -b feature/your-feature-name
-   # 或
-   git checkout -b fix/your-bug-fix
-   ```
+- 📖 Read the [documentation](https://github.com/Auromix/BizBot#readme)
+- 💬 Open a [GitHub Discussion](https://github.com/Auromix/BizBot/discussions)
+- 🐛 Report a [Bug](https://github.com/Auromix/BizBot/issues/new?template=bug_report.md)
+- 💡 Request a [Feature](https://github.com/Auromix/BizBot/issues/new?template=feature_request.md)
 
-3. **开发环境设置**
-   ```bash
-   # 创建虚拟环境
-   conda create -n we-business-manager python=3.11 -y
-   conda activate we-business-manager
-   
-   # 安装依赖
-   pip install -r requirements.txt
-   pip install pytest pytest-asyncio pytest-cov
-   ```
-
-4. **编写代码**
-   - 遵循项目的代码风格（PEP 8）
-   - 添加必要的注释和文档字符串
-   - 为新功能编写测试
-
-5. **运行测试**
-   ```bash
-   # 运行所有测试
-   pytest tests/ -v
-   
-   # 运行特定模块的测试
-   pytest tests/database/ -v
-   pytest tests/agent/ -v
-   ```
-
-6. **提交更改**
-   ```bash
-   git add .
-   git commit -m "feat: 添加新功能描述"
-   # 或
-   git commit -m "fix: 修复 bug 描述"
-   ```
-
-   提交信息请遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
-   - `feat`: 新功能
-   - `fix`: 修复 bug
-   - `docs`: 文档更新
-   - `style`: 代码格式调整
-   - `refactor`: 代码重构
-   - `test`: 测试相关
-   - `chore`: 构建/工具相关
-
-7. **推送并创建 Pull Request**
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-   
-   然后在 GitHub 上创建 Pull Request。
-
-## 代码规范
-
-### Python 代码风格
-
-- 遵循 PEP 8 代码风格指南
-- 使用类型提示（Type Hints）
-- 函数和类需要添加文档字符串（docstring）
-- 行长度建议不超过 100 字符
-
-### 测试要求
-
-- 新功能需要包含相应的测试用例
-- 测试覆盖率应保持在 70% 以上
-- 确保所有测试通过后再提交 PR
-
-### 文档要求
-
-- 更新相关的 README 文件
-- 添加必要的代码注释
-- 如果是重大变更，更新设计文档
-
-## 开发流程
-
-1. 在开始开发前，建议先创建一个 issue 讨论您的想法
-2. 等待维护者确认后，再开始编码
-3. 确保代码通过所有测试和 lint 检查
-4. 提交 PR 后，等待代码审查
-5. 根据反馈进行修改
-6. PR 合并后，您的贡献将被记录在项目贡献者列表中
-
-## 获取帮助
-
-如果您在贡献过程中遇到问题，可以：
-- 查看项目的文档
-- 在 GitHub Issues 中提问
-- 联系项目维护者
-
-再次感谢您的贡献！🎉
-
+Thank you for contributing! 🎉 感谢您的贡献！

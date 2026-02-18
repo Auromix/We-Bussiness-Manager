@@ -39,12 +39,14 @@
     response = await agent.chat("查询顾客信息")
     ```
 """
+from agent._version import __version__
 from agent.providers import LLMProvider, create_provider
 from agent.providers.base import LLMMessage, LLMResponse, FunctionCall
 from agent.functions import FunctionRegistry, ToolExecutor
 from agent.agent import Agent
 
 __all__ = [
+    "__version__",
     "LLMProvider",
     "LLMMessage",
     "LLMResponse",

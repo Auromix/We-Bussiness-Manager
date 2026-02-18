@@ -2,85 +2,80 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: Cache pip packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-asyncio pytest-cov
+      - name: Install package with dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,dev]"
 
-    - name: Lint with flake8 (optional)
-      run: |
-        pip install flake8
-        # 如果项目有 lint 配置，取消下面的注释
-        # flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # flake8 . --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
-      continue-on-error: true
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --cov --cov-report=xml --cov-report=term-missing
+        env:
+          DATABASE_URL: sqlite:///test.db
 
-    - name: Run tests
-      run: |
-        pytest tests/ -v --cov=. --cov-report=xml --cov-report=term
-      env:
-        # 测试环境变量（如果需要）
-        DATABASE_URL: sqlite:///test.db
-
-    - name: Upload coverage to Codecov (optional)
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-      continue-on-error: true
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: unittests
+        continue-on-error: true
 
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install linting tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8 black isort mypy
-      continue-on-error: true
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
-    - name: Check code formatting with black
-      run: |
-        black --check .
-      continue-on-error: true
+      - name: Check code formatting with black
+        run: black --check .
+        continue-on-error: true
 
-    - name: Check import sorting with isort
-      run: |
-        isort --check-only .
-      continue-on-error: true
+      - name: Check import sorting with isort
+        run: isort --check-only .
+        continue-on-error: true
 
+      - name: Lint with flake8
+        run: |
+          flake8 agent/ database/ interface/ config/ \
+            --count --select=E9,F63,F7,F82 --show-source --statistics
+        continue-on-error: true

@@ -7,10 +7,10 @@
     LLM Agent &nbsp;·&nbsp; Database ORM &nbsp;·&nbsp; Web Dashboard
   </p>
   <p align="center">
-    <a href="https://github.com/Auromix/BizBot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+    <a href="https://github.com/Auromix/bizbot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
     <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
-    <a href="https://github.com/Auromix/BizBot/issues"><img src="https://img.shields.io/github/issues/Auromix/BizBot.svg" alt="Issues"></a>
-    <a href="https://github.com/Auromix/BizBot/stargazers"><img src="https://img.shields.io/github/stars/Auromix/BizBot.svg?style=social" alt="Stars"></a>
+    <a href="https://github.com/Auromix/bizbot/issues"><img src="https://img.shields.io/github/issues/Auromix/bizbot.svg" alt="Issues"></a>
+    <a href="https://github.com/Auromix/bizbot/stargazers"><img src="https://img.shields.io/github/stars/Auromix/bizbot.svg?style=social" alt="Stars"></a>
   </p>
 </p>
 
@@ -58,7 +58,7 @@ BizBot is an open-source framework that lets small-business owners — salons, g
 ## 📦 Project Structure
 
 ```
-BizBot/
+bizbot/
 ├── agent/                 # LLM agent framework
 │   ├── agent.py           #   Core agent with multi-turn tool calling
 │   ├── providers/         #   LLM providers (OpenAI, Claude, MiniMax, ...)
@@ -97,8 +97,8 @@ BizBot/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Auromix/BizBot.git
-cd BizBot
+git clone https://github.com/Auromix/bizbot.git
+cd bizbot
 ```
 
 ### 2. Create a virtual environment

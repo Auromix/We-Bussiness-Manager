@@ -13,8 +13,8 @@ Thank you for your interest in **BizBot**! We welcome all forms of contributions
 1. **Fork & Clone**
 
 ```bash
-git clone https://github.com/<your-username>/BizBot.git
-cd BizBot
+git clone https://github.com/<your-username>/bizbot.git
+cd bizbot
 ```
 
 2. **Create a Virtual Environment**
@@ -134,8 +134,8 @@ Before creating an issue:
 1. **Fork & 克隆**
 
 ```bash
-git clone https://github.com/<your-username>/BizBot.git
-cd BizBot
+git clone https://github.com/<your-username>/bizbot.git
+cd bizbot
 ```
 
 2. **创建虚拟环境**
@@ -248,9 +248,9 @@ git push origin feature/your-feature-name
 
 ## Getting Help | 获取帮助
 
-- 📖 Read the [documentation](https://github.com/Auromix/BizBot#readme)
-- 💬 Open a [GitHub Discussion](https://github.com/Auromix/BizBot/discussions)
-- 🐛 Report a [Bug](https://github.com/Auromix/BizBot/issues/new?template=bug_report.md)
-- 💡 Request a [Feature](https://github.com/Auromix/BizBot/issues/new?template=feature_request.md)
+- 📖 Read the [documentation](https://github.com/Auromix/bizbot#readme)
+- 💬 Open a [GitHub Discussion](https://github.com/Auromix/bizbot/discussions)
+- 🐛 Report a [Bug](https://github.com/Auromix/bizbot/issues/new?template=bug_report.md)
+- 💡 Request a [Feature](https://github.com/Auromix/bizbot/issues/new?template=feature_request.md)
 
 Thank you for contributing! 🎉 感谢您的贡献！

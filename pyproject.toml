@@ -80,11 +80,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Auromix/BizBot"
-Documentation = "https://github.com/Auromix/BizBot#readme"
-Repository = "https://github.com/Auromix/BizBot"
-Issues = "https://github.com/Auromix/BizBot/issues"
-Changelog = "https://github.com/Auromix/BizBot/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Auromix/bizbot"
+Documentation = "https://github.com/Auromix/bizbot#readme"
+Repository = "https://github.com/Auromix/bizbot"
+Issues = "https://github.com/Auromix/bizbot/issues"
+Changelog = "https://github.com/Auromix/bizbot/blob/main/CHANGELOG.md"
 
 [project.scripts]
 bizbot = "app:main"

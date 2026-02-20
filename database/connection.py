@@ -8,6 +8,7 @@
 
 本模块不包含任何业务逻辑，仅提供数据库基础操作。
 """
+import os
 from typing import Optional, Union, Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -54,6 +55,14 @@ class DatabaseConnection:
         self.database_url: str = database_url or settings.database_url
 
         if self.database_url.startswith("sqlite"):
+            # 自动创建 SQLite 数据库文件所在目录
+            # sqlite:///relative/path/db  → 相对路径（3个斜杠）
+            # sqlite:////absolute/path/db → 绝对路径（4个斜杠）
+            db_path = self.database_url[len("sqlite:///"):]
+            if db_path:
+                db_dir = os.path.dirname(db_path)
+                if db_dir:
+                    os.makedirs(db_dir, exist_ok=True)
             self.engine = create_engine(
                 self.database_url,
                 echo=False,

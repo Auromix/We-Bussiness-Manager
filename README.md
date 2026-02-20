@@ -322,7 +322,28 @@ conda activate bizbot
 
 ---
 
-### 第四步：配置 `.env`
+### 第四步：创建数据目录并设置权限
+
+SQLite 数据库默认存放在项目的 `data/` 目录中。在服务器上，若该目录不存在，启动时会报 `unable to open database file` 错误。
+
+```bash
+# 在项目根目录下执行（即 bizbot/ 目录内）
+mkdir -p data
+chmod 755 data
+```
+
+> **说明**
+> - 从 v1.x 起，程序在启动时会自动尝试创建 `data/` 目录；但若当前用户对父目录没有写权限（如 `/opt/` 下的项目），仍需手动建好目录并赋予写权限。
+> - 若将 `DATABASE_URL` 改为绝对路径（如 `sqlite:////var/lib/bizbot/store.db`），同样需确保该路径可被运行用户写入：
+>   ```bash
+>   sudo mkdir -p /var/lib/bizbot
+>   sudo chown YOUR_USER:YOUR_USER /var/lib/bizbot
+>   ```
+> - 若你选择使用 PostgreSQL，则不需要上述步骤，但需确保数据库已创建且连接字符串正确。
+
+---
+
+### 第五步：配置 `.env`
 
 **方式 A：交互式向导（推荐）**
 
@@ -351,7 +372,7 @@ WEB_SECRET_KEY=随机生成一个长字符串
 
 ---
 
-### 第五步：验证启动
+### 第六步：验证启动
 
 ```bash
 conda activate bizbot
@@ -373,7 +394,7 @@ python app.py
 
 ---
 
-### 第六步：阿里云安全组放行端口
+### 第七步：阿里云安全组放行端口
 
 在 **阿里云控制台 → ECS → 安全组 → 入方向规则** 中添加：
 
@@ -383,7 +404,7 @@ python app.py
 
 ---
 
-### 第七步（推荐）：配置 systemd 后台服务
+### 第八步（推荐）：配置 systemd 后台服务
 
 避免 SSH 断开后服务停止，将 BizBot 注册为系统服务：
 
@@ -391,7 +412,7 @@ python app.py
 sudo nano /etc/systemd/system/bizbot.service
 ```
 
-写入以下内容（将 `YOUR_USER` 替换为你的实际用户名）：
+写入以下内容（将 `YOUR_USER` 和路径替换为实际值）：
 
 ```ini
 [Unit]
@@ -410,6 +431,13 @@ Environment=PATH=/home/YOUR_USER/miniconda3/envs/bizbot/bin
 [Install]
 WantedBy=multi-user.target
 ```
+
+> **⚠️ 注意权限**：若项目部署在 `/opt/` 等系统目录，需确保 `WorkingDirectory` 及其 `data/` 子目录对 `User` 指定的用户可读写：
+> ```bash
+> # 以实际路径为例
+> sudo mkdir -p /opt/bizbot/bizbot/data
+> sudo chown -R YOUR_USER:YOUR_USER /opt/bizbot/bizbot
+> ```
 
 ```bash
 # 启用并启动
